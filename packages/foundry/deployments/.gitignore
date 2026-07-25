@@ -1,2 +1,5 @@
 # Ignore 31337 deployments
 31337.json
+
+# Local fork nested-deployment manifests, same reason as 31337.json
+31337.nested.json
