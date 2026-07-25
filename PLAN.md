@@ -57,16 +57,28 @@ Testnet ETH acquisition is the classic hackathon time sink, and Unichain Sepolia
 
 ### Addresses — Ethereum Sepolia (11155111)
 
-Sourced from official Uniswap docs. **Verify every one with `cast code` before it enters the codebase.** A wrong address means lost funds; docs are not proof of deployment.
+Sourced from official Uniswap docs, then **verified onchain in Milestone 0** (2026-07-25) against `https://ethereum-sepolia-rpc.publicnode.com`, `cast chain-id` → `11155111`.
 
-| Contract | Address | Verified onchain |
-|---|---|:--:|
-| PoolManager | `0xE03A1074c86CFeDd5C142C4F04F1a1536e203543` | ☐ |
-| PositionManager | `0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4` | ☐ |
-| StateView | `0xe1dd9c3fa50edb962e442f60dfbc432e24537e4c` | ☐ |
-| Quoter | `0x61b3f2011a92d183c7dbadbda940a7555ccf9227` | ☐ |
-| Universal Router | `0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b` | ☐ |
-| Permit2 (all chains) | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | ☐ |
+| Contract | Address | Code | Cross-check |
+|---|---|:--:|---|
+| PoolManager | `0xE03A1074c86CFeDd5C142C4F04F1a1536e203543` | ✅ 48021b | — (the anchor) |
+| PositionManager | `0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4` | ✅ 47757b | `.poolManager()` → anchor ✅ |
+| StateView | `0xe1dd9c3fa50edb962e442f60dfbc432e24537e4c` | ✅ 7065b | `.poolManager()` → anchor ✅ |
+| Quoter | `0x61b3f2011a92d183c7dbadbda940a7555ccf9227` | ✅ 11643b | `.poolManager()` → anchor ✅ |
+| Universal Router | `0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b` | ✅ 39083b | — |
+| Permit2 (all chains) | `0x000000000022D473030F116dDEE9F6B43aC78BA3` | ✅ 18307b | `PositionManager.permit2()` → this ✅ |
+
+Bytecode presence alone only proves *something* is deployed. The cross-check column is the real evidence: three independent peripherals each resolve to the same PoolManager, and PositionManager confirms canonical Permit2. That is a genuinely wired v4 deployment.
+
+### Deployer
+
+Keystore `ethgloballisbon2026` → **`0x37B5b8BF6C6068cdda8506AD7EB0246A87eee20A`** (created Milestone 0; fresh EOA, nonce 0).
+
+```
+yarn deploy --network sepolia --keystore ethgloballisbon2026
+```
+
+Only ETH for **gas** is needed. Both sides of the `JOULE/USDC` pool are our own contracts (`JouleToken` + `MockUSDC`), so no real value has to be sourced to seed liquidity. At the ~1.1 gwei base fee measured in Milestone 0, four contract deploys land well under 0.01 ETH — 0.1 ETH is comfortable headroom for the whole build plus demo reruns.
 
 Unichain Sepolia fallback (1301) — PoolManager `0x00b036b58a818b1bc34d502d3fe730db729e62ac`, PositionManager `0xf969aee60879c54baaed9f3ed26147db216fd664`, StateView `0xc199f1072a74d4e905aba1a84d9a45e2546b6222`, Quoter `0x56dcd40a3f2d466f48e7f48bdbe5cc9b92ae4472`, Universal Router `0xf70536b3bcc1bd1a972dc186a2cf84cc6da6be5d`. Same verification requirement.
 
