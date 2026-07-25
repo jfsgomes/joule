@@ -135,23 +135,39 @@ agent/                    # TypeScript delivery agent
 
 ### WorkEscrow key functions
 
+Full ledger with running balances: [docs/MECHANISM.md](./docs/MECHANISM.md).
+
 | Function | Actor | Effect |
 |---|---|---|
 | `stake(amount)` | Agent | deposits USDC collateral |
-| `issue(count, askPrice)` | Agent | mints Joules if coverage ratio holds; buyers purchase at ask |
-| `redeem(jobSpec)` | Holder | locks 1 Joule, starts delivery clock |
+| `issue(count)` | Agent | mints `count` Joules **to the agent** if coverage holds |
+| `redeem(jobSpec)` | Holder | transfers 1 Joule into escrow custody, starts delivery clock |
 | `submitWork(jobId, resultHash)` | Agent | records delivery before deadline |
-| `accept(jobId)` / auto-accept via verifier | Holder / anyone | burns Joule, releases revenue |
-| `claimTimeout(jobId)` | Anyone | after deadline with no submission: refund + penalty from collateral |
+| `accept(jobId)` / auto-accept via verifier | Holder / anyone | burns the locked Joule; frees coverage requirement |
+| `claimTimeout(jobId)` | Anyone | after deadline with no submission: burns Joule, pays redeemer `faceValue + penalty` from collateral |
 | `unstake(amount)` | Agent | withdraw only collateral not backing outstanding Joules |
+
+**`issue()` is a pure mint — there is no price argument and no primary market.** The agent receives the Joules and sells them into the Uniswap pool. The escrow never handles a sale, so it never handles sale proceeds; the collateral is the entire guarantee. An `askPrice` here would be a second pricing path competing with the pool, and price-setting by the agent is the thing the thesis argues against.
+
+### Parameters (immutable, set at deployment)
+
+| Parameter | Meaning | Demo value |
+|---|---|---|
+| `faceValue` | Agent's declared liability per Joule — the guaranteed refund on default. **Not the price.** | 5 USDC |
+| `penalty` | Extra paid to the redeemer on default | 5 USDC |
+| `coverageRatio` | Collateral multiple backing each outstanding Joule | 2× |
+| `deliveryBlocks` | Delivery window, **in blocks** so the demo is countable | 10 (~2 min) |
+
+Solvency requires `coverageRatio ≥ (faceValue + penalty) / faceValue`. At `penalty = faceValue` that is exactly 2×, which is why the demo values are the tight solution rather than a guess — burning one Joule frees precisely what one default costs. Raising `penalty` without raising `coverageRatio` breaks solvency.
 
 ### Invariants (test these)
 
 - Joules can only be minted/burned by `WorkEscrow`.
 - `collateral >= coverageRatio × faceValue × outstandingJoules` at all times.
-- Locked (mid-redemption) Joules are non-transferable.
+- A redeemed Joule sits in escrow custody, so it cannot be moved by anyone — custody *is* the lock, and no transfer hook on the token is needed.
 - An agent can never unstake collateral backing outstanding Joules.
 - `claimTimeout` is callable by anyone but pays only the redeemer.
+- Defaulting is never profitable while `salePrice < faceValue + penalty`.
 
 ---
 
@@ -215,7 +231,7 @@ Contracts fully done before any frontend work, per priority call.
 
 ## Demo Script (3 min)
 
-1. Agent A stakes 100 USDC, issues 10 Joules at 5 USDC. Pool goes live.
+1. Agent A stakes 100 USDC, mints 10 Joules, seeds the pool at ~5 USDC. Pool goes live.
 2. Human buys Joules via the Trading API → price ticks up on the chart. "This is price discovery for agent labor."
 3. Agent B redeems a Joule with job `sum(2,2)`. Demo agent delivers, verifier auto-accepts, token burns.
 4. Kill the demo agent. Redeem another Joule. Deadline passes → `claimTimeout` → refund + penalty visibly leaves the agent's stake. "This is why the promise is credible."
@@ -227,8 +243,9 @@ Optional flourish: show the pool in the real Uniswap web interface — both shor
 
 ## Open Questions
 
-- Coverage ratio and penalty size: start with 2× and penalty = face value; revisit if capital efficiency looks silly in the demo.
-- Should issuance revenue be held until delivery, or paid to the agent immediately? (Safer: held. Simpler demo: immediate.)
+- ~~Coverage ratio and penalty size~~ **Resolved:** 2× with penalty = face value is the tight solvency solution, not a guess. See MECHANISM.md.
+- ~~Should issuance revenue be held or paid immediately?~~ **Resolved: moot.** Sales happen in the pool, so the escrow never receives proceeds and cannot hold them. Collateral is the sole guarantee.
+- Seed the pool single-sided (JOULE only, range above spot) to avoid committing a USDC leg? Cheaper and sells at a better average, but makes the market one-directional — which breaks "agent buys back below floor" and gives a monotonic price chart. Decide at Milestone 4.
 - Delivery window: express it in **blocks (~10, i.e. ~2 min on Sepolia)**, not wall-clock seconds — the timeout demo should be paced in units the audience can count, and it stays correct if we fall back to a faster chain. 24h is meaningless in a demo.
 - Trading API key: acquisition process, rate limits, and approval delay are undocumented on the supported-chains page. **Resolve in Milestone 0** — if there is an approval queue, it blocks the prize deliverable and we need to be in it on day one.
 - Does the Trading API quote a pool as thin as ours, or does its router refuse low-liquidity pairs? Test early; the fallback is direct Universal Router calls, which weakens the prize story.
