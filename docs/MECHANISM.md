@@ -145,6 +145,57 @@ If a Joule traded below 10 USDC, anyone could buy it, redeem it, let it lapse an
 
 That is the thesis in one line: **the floor is enforced, the premium is discovered.**
 
+## Seeding the pool — why it needs only one token
+
+Step 3 of the ledger costs the agent 50 USDC of their own liquidity on top of 100 USDC of collateral: 150 USDC committed to sell 50 USDC of work. That is a v2-shaped assumption, and v4 does not require it.
+
+**In Uniswap v2**, liquidity spans every price from 0 to ∞. Because the pool might trade anywhere, you must be ready on both sides — so you deposit both tokens.
+
+**In v3/v4** you choose a range `[Pa, Pb]` and your liquidity exists only inside it. Which means:
+
+| Where spot sits | What the position holds |
+|---|---|
+| Below the range | **100% token0** |
+| Inside the range | a mix, shifting as price moves |
+| Above the range | **100% token1** |
+
+Place a range **entirely above spot** and the position is 100% JOULE the moment it opens — **zero USDC deposited**. As buyers push price up through the range, JOULE sells off progressively and USDC accumulates in its place. This is a **range order**: a limit sell expressed as liquidity.
+
+### Concretely
+
+- Initialize the pool at 4.90 USDC/JOULE
+- Add all 10 JOULE across `[5.00, 6.00]`
+- Supply no USDC
+
+Buyers push price up from 4.90; crossing 5.00 they begin filling against the agent's inventory. By 6.00 all ten Joules are sold and the position is pure USDC.
+
+Average execution is the **geometric** mean, not the arithmetic one: `√(5 × 6) ≈ 5.48`. That falls straight out of the concentrated-liquidity math — sweeping a full range converts `L(1/√Pa − 1/√Pb)` of token0 into `L(√Pb − √Pa)` of token1, and the ratio simplifies to exactly `√(Pa·Pb)`.
+
+| | Two-sided seed | Single-sided range |
+|---|---|---|
+| Collateral | 100 USDC | 100 USDC |
+| Liquidity supplied | **50 USDC** + 10 JOULE | **0 USDC** + 10 JOULE |
+| Total committed | 150 USDC | **100 USDC** |
+| Sells at | ~5.00 flat | 5.00 → 6.00, avg ≈ 5.48 |
+
+A third less capital, at a better average price, for the same sale.
+
+### Two things that will bite
+
+**Token ordering is by address, not by choice.** Uniswap sorts so `token0 < token1` numerically, so whether JOULE is token0 or token1 depends on the deployed addresses — and that flips which tick direction "above spot" means. Get it backwards and you place a *buy* wall where you meant a sell wall, which fills instantly against you. Since we deploy `JouleToken`, either branch on `address(joule) < address(usdc)` at deploy time, or mine a CREATE2 salt to force the ordering. **Assert the ordering in the deploy script rather than assuming it.**
+
+**A single-sided range is a one-directional market.** With no liquidity below spot, nobody can sell a Joule back. Fine for demo step 2 (buy, watch price rise), but it breaks the should-have *"agent buys back own Joules below floor"*, and a chart that only goes up is a weaker story than a two-sided market. Supporting sells needs a second USDC-side range below spot — which costs USDC again.
+
+### What the stretch-goal hook automates
+
+A v4 hook runs contract logic on every swap. Rather than the agent pre-committing inventory into a static range, the hook can:
+
+- **Mint on demand** as price crosses the ask — issuing just-in-time against live coverage headroom instead of pre-minting ten and hoping
+- **Bid below the floor** — buying back Joules trading under `faceValue + penalty`, which is exactly the arbitrage boundary described above
+- **Route swap fees into collateral**, so trading activity raises coverage and therefore issuance capacity
+
+The static single-sided range is that behaviour frozen at a single moment. The hook makes it responsive to the escrow's actual state.
+
 ## Why revenue cannot be "held"
 
 Look again at step 4. The holder's USDC goes into the **Uniswap pool**, and the agent captures it through their LP position. It never enters the escrow.
