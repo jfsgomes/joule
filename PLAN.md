@@ -226,8 +226,8 @@ Note the Sepolia deploy is **not** last. A public frontend URL pointing at a lap
 | 1 | Contracts core | All four contracts written; `forge test` green on happy path, timeout slash, and the optimistic/dispute paths | ✅ |
 | 2 | Test depth | Fuzz on all math, all five invariants passing | ✅ *(fork test deferred to 3 — nothing touches Uniswap yet)* |
 | 3 | Pool live | `JOULE/USDC` v4 pool seeded on a Sepolia fork; swap works from a script; fork test against real v4 | ✅ |
-| 4 | Agent loop | Demo agent auto-delivers on `Redeemed` events | ← next |
-| 5 | Frontend functional | Buy → redeem → settle end to end against the fork; Trading API driving the buy | |
+| 4 | Agent loop | Demo agent auto-delivers on `Redeemed` events | ✅ |
+| 5 | Frontend functional | Buy → redeem → settle end to end against the fork; Trading API driving the buy | ← next |
 | 6 | Deployed + verified | Live on Sepolia, verified on Etherscan, pokeable via abi.ninja; local UI repointed at it | |
 | 7 | Frontend beautiful | Design pass, price chart, SE2 branding gone, Vercel deploy | |
 | 8 | Slash demo | Timeout path demoable on purpose | |
