@@ -31,6 +31,7 @@
     "foundry:generate": "yarn workspace @se-2/foundry account:generate",
     "foundry:lint": "yarn workspace @se-2/foundry lint",
     "foundry:test": "yarn workspace @se-2/foundry test",
+    "foundry:test:fork": "yarn workspace @se-2/foundry test:fork",
     "foundry:verify": "yarn workspace @se-2/foundry verify",
     "generate": "yarn foundry:generate",
     "postinstall": "husky install",
