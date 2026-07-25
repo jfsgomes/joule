@@ -474,7 +474,7 @@ const deployedContracts = {
               internalType: "uint256",
             },
             {
-              name: "coverageRatio_",
+              name: "collateralPerJoule_",
               type: "uint256",
               internalType: "uint256",
             },
@@ -490,6 +490,45 @@ const deployedContracts = {
             },
           ],
           stateMutability: "nonpayable",
+        },
+        {
+          type: "function",
+          name: "MAX_SPEC_BYTES",
+          inputs: [],
+          outputs: [
+            {
+              name: "",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          stateMutability: "view",
+        },
+        {
+          type: "function",
+          name: "MAX_WINDOW_BLOCKS",
+          inputs: [],
+          outputs: [
+            {
+              name: "",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          stateMutability: "view",
+        },
+        {
+          type: "function",
+          name: "ONE",
+          inputs: [],
+          outputs: [
+            {
+              name: "",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          stateMutability: "view",
         },
         {
           type: "function",
@@ -571,6 +610,19 @@ const deployedContracts = {
         },
         {
           type: "function",
+          name: "collateralPerJoule",
+          inputs: [],
+          outputs: [
+            {
+              name: "",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          stateMutability: "view",
+        },
+        {
+          type: "function",
           name: "collateralToken",
           inputs: [],
           outputs: [
@@ -584,7 +636,7 @@ const deployedContracts = {
         },
         {
           type: "function",
-          name: "coverageRatio",
+          name: "coverageRatioBps",
           inputs: [],
           outputs: [
             {
@@ -701,25 +753,6 @@ const deployedContracts = {
         },
         {
           type: "function",
-          name: "jobSpecs",
-          inputs: [
-            {
-              name: "jobId",
-              type: "uint256",
-              internalType: "uint256",
-            },
-          ],
-          outputs: [
-            {
-              name: "spec",
-              type: "bytes",
-              internalType: "bytes",
-            },
-          ],
-          stateMutability: "view",
-        },
-        {
-          type: "function",
           name: "jobs",
           inputs: [
             {
@@ -782,6 +815,25 @@ const deployedContracts = {
           type: "function",
           name: "outstanding",
           inputs: [],
+          outputs: [
+            {
+              name: "",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          stateMutability: "view",
+        },
+        {
+          type: "function",
+          name: "owed",
+          inputs: [
+            {
+              name: "",
+              type: "address",
+              internalType: "address",
+            },
+          ],
           outputs: [
             {
               name: "",
@@ -881,6 +933,25 @@ const deployedContracts = {
         },
         {
           type: "function",
+          name: "specHashes",
+          inputs: [
+            {
+              name: "jobId",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          outputs: [
+            {
+              name: "",
+              type: "bytes32",
+              internalType: "bytes32",
+            },
+          ],
+          stateMutability: "view",
+        },
+        {
+          type: "function",
           name: "stake",
           inputs: [
             {
@@ -902,6 +973,11 @@ const deployedContracts = {
               internalType: "uint256",
             },
             {
+              name: "jobSpec",
+              type: "bytes",
+              internalType: "bytes",
+            },
+            {
               name: "result",
               type: "bytes",
               internalType: "bytes",
@@ -909,6 +985,19 @@ const deployedContracts = {
           ],
           outputs: [],
           stateMutability: "nonpayable",
+        },
+        {
+          type: "function",
+          name: "totalOwed",
+          inputs: [],
+          outputs: [
+            {
+              name: "",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          stateMutability: "view",
         },
         {
           type: "function",
@@ -937,6 +1026,19 @@ const deployedContracts = {
           stateMutability: "view",
         },
         {
+          type: "function",
+          name: "withdraw",
+          inputs: [],
+          outputs: [
+            {
+              name: "amount",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          stateMutability: "nonpayable",
+        },
+        {
           type: "event",
           name: "DisputeResolved",
           inputs: [
@@ -960,13 +1062,19 @@ const deployedContracts = {
           name: "Issued",
           inputs: [
             {
+              name: "agent",
+              type: "address",
+              indexed: true,
+              internalType: "address",
+            },
+            {
               name: "count",
               type: "uint256",
               indexed: false,
               internalType: "uint256",
             },
             {
-              name: "outstanding",
+              name: "newOutstanding",
               type: "uint256",
               indexed: false,
               internalType: "uint256",
@@ -1009,12 +1117,6 @@ const deployedContracts = {
               indexed: true,
               internalType: "uint256",
             },
-            {
-              name: "finalStatus",
-              type: "uint8",
-              indexed: false,
-              internalType: "enum WorkEscrow.Status",
-            },
           ],
           anonymous: false,
         },
@@ -1035,7 +1137,7 @@ const deployedContracts = {
               internalType: "address",
             },
             {
-              name: "paid",
+              name: "credited",
               type: "uint256",
               indexed: false,
               internalType: "uint256",
@@ -1085,13 +1187,13 @@ const deployedContracts = {
               internalType: "uint256",
             },
             {
-              name: "owed",
+              name: "owedAmount",
               type: "uint256",
               indexed: false,
               internalType: "uint256",
             },
             {
-              name: "paid",
+              name: "credited",
               type: "uint256",
               indexed: false,
               internalType: "uint256",
@@ -1104,13 +1206,19 @@ const deployedContracts = {
           name: "Staked",
           inputs: [
             {
+              name: "agent",
+              type: "address",
+              indexed: true,
+              internalType: "address",
+            },
+            {
               name: "amount",
               type: "uint256",
               indexed: false,
               internalType: "uint256",
             },
             {
-              name: "collateral",
+              name: "newCollateral",
               type: "uint256",
               indexed: false,
               internalType: "uint256",
@@ -1123,13 +1231,51 @@ const deployedContracts = {
           name: "Unstaked",
           inputs: [
             {
+              name: "agent",
+              type: "address",
+              indexed: true,
+              internalType: "address",
+            },
+            {
               name: "amount",
               type: "uint256",
               indexed: false,
               internalType: "uint256",
             },
             {
-              name: "collateral",
+              name: "newCollateral",
+              type: "uint256",
+              indexed: false,
+              internalType: "uint256",
+            },
+          ],
+          anonymous: false,
+        },
+        {
+          type: "event",
+          name: "VerifierReverted",
+          inputs: [
+            {
+              name: "jobId",
+              type: "uint256",
+              indexed: true,
+              internalType: "uint256",
+            },
+          ],
+          anonymous: false,
+        },
+        {
+          type: "event",
+          name: "Withdrawn",
+          inputs: [
+            {
+              name: "account",
+              type: "address",
+              indexed: true,
+              internalType: "address",
+            },
+            {
+              name: "amount",
               type: "uint256",
               indexed: false,
               internalType: "uint256",
@@ -1213,6 +1359,17 @@ const deployedContracts = {
         },
         {
           type: "error",
+          name: "InvalidParameter",
+          inputs: [
+            {
+              name: "what",
+              type: "string",
+              internalType: "string",
+            },
+          ],
+        },
+        {
+          type: "error",
           name: "JobNotDisputed",
           inputs: [
             {
@@ -1241,6 +1398,17 @@ const deployedContracts = {
               name: "jobId",
               type: "uint256",
               internalType: "uint256",
+            },
+          ],
+        },
+        {
+          type: "error",
+          name: "NothingOwed",
+          inputs: [
+            {
+              name: "account",
+              type: "address",
+              internalType: "address",
             },
           ],
         },
@@ -1295,10 +1463,37 @@ const deployedContracts = {
         },
         {
           type: "error",
+          name: "SpecMismatch",
+          inputs: [
+            {
+              name: "jobId",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+        },
+        {
+          type: "error",
+          name: "SpecTooLarge",
+          inputs: [
+            {
+              name: "length",
+              type: "uint256",
+              internalType: "uint256",
+            },
+            {
+              name: "maxLength",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+        },
+        {
+          type: "error",
           name: "UnsafeParameters",
           inputs: [
             {
-              name: "coverageRatio",
+              name: "perJoule",
               type: "uint256",
               internalType: "uint256",
             },
@@ -1306,6 +1501,17 @@ const deployedContracts = {
               name: "required",
               type: "uint256",
               internalType: "uint256",
+            },
+          ],
+        },
+        {
+          type: "error",
+          name: "ZeroAddress",
+          inputs: [
+            {
+              name: "what",
+              type: "string",
+              internalType: "string",
             },
           ],
         },

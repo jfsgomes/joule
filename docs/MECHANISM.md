@@ -294,6 +294,25 @@ The delivery window is ~2 minutes, which makes the collateral lock sound short. 
 
 This is the more practical of the two limits: it caps concurrent exposure, not lifetime volume, and the binding quantity is *Joules in circulation × time*.
 
+### Limit 3 — the verifier is a total trust root
+
+`IVerifier` is an immutable address set at deployment, and it decides both which jobs can be opened and which results settle. Two one-line implementations break the system completely:
+
+| Rug | Effect |
+|---|---|
+| `isValidSpec` always returns false | Every Joule becomes permanently unredeemable. The agent keeps every sale proceed and can never be slashed, because no job can ever be opened. |
+| `verify` always returns true | Every job settles on the first submission regardless of content. The optimistic path, the acceptance window and the dispute machinery are all bypassed. |
+
+Neither is exploitable *after* deployment — the address cannot be changed — so this is a deployment-time trust decision, not a live attack surface. But it means **reading the verifier's source is not optional** for anyone evaluating a Joule. The escrow's guarantees are conditional on it.
+
+Set against that: the escrow itself has no admin, no owner, no pause, and no upgrade path. The verifier is the single place where trust is required, which at least makes it easy to point at.
+
+### Limit 4 — donated tokens are stranded
+
+Tokens sent to the escrow outside `stake` or `dispute` are credited to no ledger and cannot be withdrawn by anyone, including the agent. This breaks no invariant — `collateral`, `disputeBonds` and `totalOwed` are all tracked independently of the balance, and the tests assert holdings only ever *exceed* the ledgers — but it is a one-way door.
+
+No `skim()` is provided. Adding one means deciding who owns an unexplained balance, and every answer is worse than the rule "do not send tokens directly."
+
 ### Roadmap
 
 | Mitigation | Attacks | Cost |

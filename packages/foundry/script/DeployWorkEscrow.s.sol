@@ -35,8 +35,11 @@ contract DeployWorkEscrow is ScaffoldETHDeploy {
     /// @notice Paid to the redeemer on default, and the cost of disputing.
     uint256 constant PENALTY = 5e6; // 5 USDC
 
-    /// @notice Collateral multiple per outstanding Joule. Tight at penalty == faceValue.
-    uint256 constant COVERAGE_RATIO = 2;
+    /// @notice Collateral locked per outstanding Joule. Absolute, not a multiple:
+    ///         an integer ratio cannot express 1.2x and would round a 6-unit
+    ///         liability up to a 10-unit lock. This is the minimum legal value,
+    ///         faceValue + penalty, which is 2x face at these parameters.
+    uint256 constant COLLATERAL_PER_JOULE = FACE_VALUE + PENALTY;
 
     /// @notice Delivery window. Blocks, not seconds, so the demo is countable.
     uint256 constant DELIVERY_BLOCKS = 10; // ~2 min on Sepolia
@@ -57,7 +60,7 @@ contract DeployWorkEscrow is ScaffoldETHDeploy {
             arbiter,
             FACE_VALUE,
             PENALTY,
-            COVERAGE_RATIO,
+            COLLATERAL_PER_JOULE,
             DELIVERY_BLOCKS,
             ACCEPT_BLOCKS
         );
@@ -132,9 +135,9 @@ contract DeployWorkEscrow is ScaffoldETHDeploy {
         );
         console.logString(
             string.concat(
-                "coverage ",
-                vm.toString(COVERAGE_RATIO),
-                "x, delivery ",
+                "collateralPerJoule ",
+                vm.toString(COLLATERAL_PER_JOULE / 1e6),
+                " USDC, delivery ",
                 vm.toString(DELIVERY_BLOCKS),
                 " blocks, accept ",
                 vm.toString(ACCEPT_BLOCKS),

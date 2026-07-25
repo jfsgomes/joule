@@ -48,6 +48,9 @@ contract WorkEscrowHandler is CommonBase, StdUtils, StdCheats {
     ///         payout ghost, which only tracks money the escrow owes them.
     mapping(address => uint256) public bondFunded;
     mapping(uint256 jobId => address) public jobRedeemer;
+    /// @notice The escrow keeps only a hash now, so the driver has to remember
+    ///         the spec in order to re-supply it at submission.
+    mapping(uint256 jobId => bytes) public jobSpecOf;
     mapping(uint256 jobId => uint256) private _indexOfJob;
 
     /// @notice USDC each address is *owed* by timeouts. Anything an address
@@ -66,6 +69,7 @@ contract WorkEscrowHandler is CommonBase, StdUtils, StdCheats {
     uint256 public callsFinalize;
     uint256 public callsDispute;
     uint256 public callsResolve;
+    uint256 public callsWithdraw;
     uint256 public reverts;
 
     constructor(WorkEscrow escrow_, MockUSDC usdc_, address agent_, address[] memory actors_) {
@@ -172,10 +176,13 @@ contract WorkEscrowHandler is CommonBase, StdUtils, StdCheats {
         a = bound(a, 0, type(uint128).max);
         b = bound(b, 0, type(uint128).max);
 
+        bytes memory spec = abi.encode(a, b);
+
         vm.prank(who);
-        try escrow.redeem(abi.encode(a, b)) returns (uint256 jobId) {
+        try escrow.redeem(spec) returns (uint256 jobId) {
             callsRedeem++;
             jobRedeemer[jobId] = who;
+            jobSpecOf[jobId] = spec;
             _indexOfJob[jobId] = openJobIds.length;
             openJobIds.push(jobId);
         } catch {
@@ -190,10 +197,11 @@ contract WorkEscrowHandler is CommonBase, StdUtils, StdCheats {
         uint256 idx = bound(jobSeed, 0, openJobIds.length - 1);
         uint256 jobId = openJobIds[idx];
 
-        (uint256 a, uint256 b) = abi.decode(escrow.jobSpecs(jobId), (uint256, uint256));
+        bytes memory spec = jobSpecOf[jobId];
+        (uint256 a, uint256 b) = abi.decode(spec, (uint256, uint256));
 
         vm.prank(agent);
-        try escrow.submitWork(jobId, abi.encode(a + b)) {
+        try escrow.submitWork(jobId, spec, abi.encode(a + b)) {
             callsDeliver++;
             _closeJob(jobId);
         } catch {
@@ -208,9 +216,11 @@ contract WorkEscrowHandler is CommonBase, StdUtils, StdCheats {
         if (openJobIds.length == 0) return;
         uint256 jobId = openJobIds[bound(jobSeed, 0, openJobIds.length - 1)];
 
+        bytes memory spec = jobSpecOf[jobId];
+
         vm.prank(agent);
-        try escrow.submitWork(jobId, abi.encode(wrong)) {
-            (uint256 a, uint256 b) = abi.decode(escrow.jobSpecs(jobId), (uint256, uint256));
+        try escrow.submitWork(jobId, spec, abi.encode(wrong)) {
+            (uint256 a, uint256 b) = abi.decode(spec, (uint256, uint256));
             (,,, WorkEscrow.Status status) = escrow.jobs(jobId);
 
             if (wrong == a + b) {
@@ -316,6 +326,17 @@ contract WorkEscrowHandler is CommonBase, StdUtils, StdCheats {
             callsTimeout++;
             expectedPayout[jobRedeemer[jobId]] += willPay;
             _closeJob(jobId);
+        } catch {
+            reverts++;
+        }
+    }
+
+    /// @dev Payouts are credited, not pushed, so someone has to collect them.
+    function withdrawFor(uint256 actorSeed) external {
+        address who = _actor(actorSeed);
+        vm.prank(who);
+        try escrow.withdraw() {
+            callsWithdraw++;
         } catch {
             reverts++;
         }

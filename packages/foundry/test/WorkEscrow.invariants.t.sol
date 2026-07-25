@@ -31,14 +31,14 @@ contract WorkEscrowInvariants is Test {
 
     uint256 internal constant FACE = 5e6;
     uint256 internal constant PENALTY = 5e6;
-    uint256 internal constant COVERAGE = 2;
+    uint256 internal constant PER_JOULE = 10e6; // faceValue + penalty, the minimum legal value
     uint256 internal constant WINDOW = 10;
     uint256 internal constant ACCEPT = 5;
 
     function setUp() public {
         usdc = new MockUSDC();
         verifier = new SumVerifier();
-        escrow = new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, FACE, PENALTY, COVERAGE, WINDOW, ACCEPT);
+        escrow = new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, FACE, PENALTY, PER_JOULE, WINDOW, ACCEPT);
         joule = escrow.joule();
 
         address[] memory actors = new address[](4);
@@ -95,7 +95,7 @@ contract WorkEscrowInvariants is Test {
     function invariant_EscrowHoldsAtLeastItsLedger() public view {
         assertGe(
             usdc.balanceOf(address(escrow)),
-            escrow.collateral() + escrow.disputeBonds(),
+            escrow.collateral() + escrow.disputeBonds() + escrow.totalOwed(),
             "the escrow's ledgers exceed its real USDC balance"
         );
     }
@@ -121,9 +121,9 @@ contract WorkEscrowInvariants is Test {
             // wallet, so the ceiling is "everything owed, plus every bond ever
             // funded". Exceeding it means the escrow paid the wrong party.
             assertLe(
-                usdc.balanceOf(actor),
+                usdc.balanceOf(actor) + escrow.owed(actor),
                 handler.expectedPayout(actor) + handler.bondFunded(actor),
-                "an address holds USDC it was never owed -- payout routing is wrong"
+                "an address holds or is owed USDC it was never entitled to -- payout routing is wrong"
             );
         }
     }
@@ -200,6 +200,7 @@ contract WorkEscrowInvariants is Test {
         handler.roll(8);
         handler.roll(8); // WINDOW is 10
         handler.claimTimeout(0, 1);
+        handler.withdrawFor(0);
         assertGt(handler.callsTimeout(), 0, "handler cannot time out -- the slash path is unreachable");
 
         // And the hostile actions must have been refused, not silently ignored.

@@ -142,12 +142,13 @@ Full ledger with running balances: [docs/MECHANISM.md](./docs/MECHANISM.md).
 | `stake(amount)` | Agent | deposits USDC collateral |
 | `issue(count)` | Agent | mints `count` Joules **to the agent** if coverage holds |
 | `redeem(jobSpec)` | Holder | transfers 1 Joule into escrow custody, starts delivery clock |
-| `submitWork(jobId, result)` | Agent | verifier confirms → settles immediately; cannot confirm → opens the acceptance window |
+| `submitWork(jobId, spec, result)` | Agent | verifier confirms → settles immediately; cannot confirm → opens the acceptance window. The spec is re-supplied and checked against its stored hash |
 | `accept(jobId)` | Redeemer | settles an unverified result early |
 | `finalize(jobId)` | Anyone | settles an unchallenged result once its window closes |
 | `dispute(jobId)` | Redeemer | challenges an unverified result; costs a bond of `penalty` |
 | `resolveDispute(jobId, upheld)` | Arbiter | rules on a challenge |
-| `claimTimeout(jobId)` | Anyone | after deadline with no submission: burns Joule, pays redeemer `faceValue + penalty` from collateral |
+| `claimTimeout(jobId)` | Anyone | after deadline with no submission: burns Joule, **credits** redeemer `faceValue + penalty` from collateral |
+| `withdraw()` | Anyone credited | collects a credited payout. Payouts are pull, not push, so a blocklisted recipient cannot brick a job |
 | `unstake(amount)` | Agent | withdraw only collateral not backing outstanding Joules |
 
 **`issue()` is a pure mint — there is no price argument and no primary market.** The agent receives the Joules and sells them into the Uniswap pool. The escrow never handles a sale, so it never handles sale proceeds; the collateral is the entire guarantee. An `askPrice` here would be a second pricing path competing with the pool, and price-setting by the agent is the thing the thesis argues against.
@@ -158,17 +159,17 @@ Full ledger with running balances: [docs/MECHANISM.md](./docs/MECHANISM.md).
 |---|---|---|
 | `faceValue` | Agent's declared liability per Joule — the guaranteed refund on default. **Not the price.** | 5 USDC |
 | `penalty` | Extra paid to the redeemer on default | 5 USDC |
-| `coverageRatio` | Collateral multiple backing each outstanding Joule | 2× |
+| `collateralPerJoule` | Collateral locked per outstanding Joule. **Absolute, not a multiple** — an integer ratio cannot express 1.2× and would round a 6-unit liability up to a 10-unit lock | 10 USDC |
 | `deliveryBlocks` | Delivery window, **in blocks** so the demo is countable | 10 (~2 min) |
 | `acceptBlocks` | Acceptance window for an unverified result | 5 (~1 min) |
 | `arbiter` | Rules on disputed jobs. **The system's one centralised trust assumption** | a demo address |
 
-Solvency requires `coverageRatio ≥ (faceValue + penalty) / faceValue`. At `penalty = faceValue` that is exactly 2×, which is why the demo values are the tight solution rather than a guess — burning one Joule frees precisely what one default costs. Raising `penalty` without raising `coverageRatio` breaks solvency.
+Solvency requires `collateralPerJoule ≥ faceValue + penalty`, checked exactly in the constructor with no rounding. The demo values sit precisely on that bound — settling one Joule frees exactly what one default costs. Raising `penalty` without raising `collateralPerJoule` breaks solvency and the constructor refuses to deploy.
 
 ### Invariants (test these)
 
 - Joules can only be minted/burned by `WorkEscrow`.
-- `collateral >= coverageRatio × faceValue × outstandingJoules` at all times.
+- `collateral >= collateralPerJoule × outstandingJoules` at all times.
 - A redeemed Joule sits in escrow custody, so it cannot be moved by anyone — custody *is* the lock, and no transfer hook on the token is needed.
 - An agent can never unstake collateral backing outstanding Joules.
 - `claimTimeout` is callable by anyone but pays only the redeemer.

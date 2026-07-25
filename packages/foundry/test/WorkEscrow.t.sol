@@ -63,19 +63,19 @@ contract WorkEscrowTest is Test {
 
     uint256 internal constant FACE = 5e6; // 5 USDC
     uint256 internal constant PENALTY = 5e6; // 5 USDC
-    uint256 internal constant COVERAGE = 2;
+
     uint256 internal constant WINDOW = 10; // delivery window, blocks
     uint256 internal constant ACCEPT = 5; // acceptance window, blocks
 
-    /// @dev Cost of one default, and also the collateral freed by burning one
-    ///      Joule. Their equality is what keeps the escrow solvent -- see
-    ///      docs/MECHANISM.md.
-    uint256 internal constant PER_JOULE = COVERAGE * FACE;
+    /// @dev Cost of one default, and also the collateral freed by settling one
+    ///      Joule. Their equality at the minimum legal value is what keeps the
+    ///      escrow solvent -- see docs/MECHANISM.md.
+    uint256 internal constant PER_JOULE = FACE + PENALTY;
 
     function setUp() public {
         usdc = new MockUSDC();
         verifier = new SumVerifier();
-        escrow = new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, FACE, PENALTY, COVERAGE, WINDOW, ACCEPT);
+        escrow = new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, FACE, PENALTY, PER_JOULE, WINDOW, ACCEPT);
         joule = escrow.joule();
         ONE = joule.ONE();
 
@@ -106,39 +106,51 @@ contract WorkEscrowTest is Test {
         vm.stopPrank();
     }
 
-    function _deliver(uint256 jobId, uint256 sum) internal {
+    /// @dev Payouts are credited, not pushed -- see the pull-payment note in
+    ///      WorkEscrow. Tests collect explicitly so both halves are exercised.
+    function _withdrawAs(address who) internal returns (uint256) {
+        vm.prank(who);
+        return escrow.withdraw();
+    }
+
+    /// @dev The escrow stores only a hash, so the spec is re-supplied here.
+    function _deliver(uint256 jobId, uint256 a, uint256 b, uint256 sum) internal {
         vm.prank(agent);
-        escrow.submitWork(jobId, abi.encode(sum));
+        escrow.submitWork(jobId, abi.encode(a, b), abi.encode(sum));
     }
 
     // --- constructor: solvency is enforced, not assumed ---
 
-    function test_ConstructorRejectsUnsafeCoverage() public {
-        // penalty == faceValue needs 2x. 1x lets the collateral be drained.
-        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.UnsafeParameters.selector, 1, 2));
-        new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, FACE, PENALTY, 1, WINDOW, ACCEPT);
+    function test_ConstructorRejectsUnderCollateralisation() public {
+        // One wei short of faceValue + penalty is still insolvent.
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.UnsafeParameters.selector, PER_JOULE - 1, PER_JOULE));
+        new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, FACE, PENALTY, PER_JOULE - 1, WINDOW, ACCEPT);
     }
 
-    function test_ConstructorRejectsCoverageTwoWhenPenaltyIsDoubleFace() public {
-        // faceValue + penalty = 3x faceValue, so 2x is insolvent.
-        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.UnsafeParameters.selector, 2, 3));
-        new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, FACE, 2 * FACE, 2, WINDOW, ACCEPT);
+    /// @dev The reason collateralPerJoule is absolute rather than an integer
+    ///      multiple of faceValue: a ratio cannot express 1.2x, so it would
+    ///      round a 6-unit liability up to a 10-unit lock. Here the exact
+    ///      requirement is 6 and 6 is accepted.
+    function test_ConstructorAcceptsNonIntegerCoverage() public {
+        WorkEscrow e = new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, 5e6, 1e6, 6e6, WINDOW, ACCEPT);
+        assertEq(e.collateralPerJoule(), 6e6);
+        assertEq(e.coverageRatioBps(), 12_000, "1.2x, which an integer ratio could not express");
     }
 
     /// @dev The gate must be `k*fv >= fv+p`. Rounding down instead of up is the
     ///      single change that silently breaks solvency, so pin it with fuzz.
-    function testFuzz_ConstructorGateMatchesSolvencyCondition(uint64 fv, uint64 p, uint8 k) public {
+    function testFuzz_ConstructorGateMatchesSolvencyCondition(uint64 fv, uint64 p, uint64 perJoule) public {
         vm.assume(fv > 0);
 
-        bool solvent = uint256(k) * uint256(fv) >= uint256(fv) + uint256(p);
+        bool solvent = uint256(perJoule) >= uint256(fv) + uint256(p);
 
         if (!solvent) {
             vm.expectRevert();
         }
-        WorkEscrow e = new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, fv, p, k, WINDOW, ACCEPT);
+        WorkEscrow e = new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, fv, p, perJoule, WINDOW, ACCEPT);
 
         if (solvent) {
-            assertGe(e.coverageRatio() * e.faceValue(), e.faceValue() + e.penalty());
+            assertGe(e.collateralPerJoule(), e.faceValue() + e.penalty());
         }
     }
 
@@ -183,7 +195,7 @@ contract WorkEscrowTest is Test {
 
         assertEq(escrow.freeCollateral(), 0, "nothing free while the job is open");
 
-        _deliver(jobId, 4);
+        _deliver(jobId, 2, 2, 4);
 
         assertEq(escrow.freeCollateral(), PER_JOULE, "exactly one Joule's backing is released");
 
@@ -209,6 +221,7 @@ contract WorkEscrowTest is Test {
         // Roll past the deadline and claim: the collateral is still there.
         vm.roll(block.number + WINDOW + 1);
         escrow.claimTimeout(1);
+        _withdrawAs(holder);
 
         assertEq(usdc.balanceOf(holder), FACE + PENALTY);
     }
@@ -336,7 +349,7 @@ contract WorkEscrowTest is Test {
         vm.startPrank(agent);
         joule.approve(address(escrow), ONE);
         uint256 jobId = escrow.redeem(abi.encode(uint256(1), uint256(1)));
-        escrow.submitWork(jobId, abi.encode(uint256(2)));
+        escrow.submitWork(jobId, abi.encode(uint256(1), uint256(1)), abi.encode(uint256(2)));
         vm.stopPrank();
 
         assertEq(escrow.outstanding(), 9);
@@ -351,7 +364,7 @@ contract WorkEscrowTest is Test {
         uint256 jobId = _redeemAs(holder, 2, 2);
 
         uint256 collateralBefore = escrow.collateral();
-        _deliver(jobId, 4);
+        _deliver(jobId, 2, 2, 4);
 
         assertEq(escrow.outstanding(), 9);
         assertEq(joule.totalSupply(), 9 * ONE, "the redeemed Joule is destroyed");
@@ -370,7 +383,7 @@ contract WorkEscrowTest is Test {
         uint256 jobId = _redeemAs(holder, 2, 2);
 
         vm.prank(agent);
-        escrow.submitWork(jobId, abi.encode(uint256(5))); // wrong sum
+        escrow.submitWork(jobId, abi.encode(uint256(2), uint256(2)), abi.encode(uint256(5))); // wrong sum
 
         (,, uint64 acceptDeadline, WorkEscrow.Status status) = escrow.jobs(jobId);
         assertEq(uint8(status), uint8(WorkEscrow.Status.Submitted));
@@ -387,7 +400,7 @@ contract WorkEscrowTest is Test {
         uint256 jobId = _redeemAs(holder, 2, 2);
 
         vm.prank(agent);
-        escrow.submitWork(jobId, hex"00");
+        escrow.submitWork(jobId, abi.encode(uint256(2), uint256(2)), hex"00");
 
         vm.roll(block.number + WINDOW + 1);
         vm.expectRevert(abi.encodeWithSelector(WorkEscrow.JobNotOpen.selector, jobId));
@@ -400,7 +413,7 @@ contract WorkEscrowTest is Test {
         uint256 jobId = _redeemAs(holder, 2, 2);
 
         vm.prank(agent);
-        escrow.submitWork(jobId, abi.encode(uint256(5)));
+        escrow.submitWork(jobId, abi.encode(uint256(2), uint256(2)), abi.encode(uint256(5)));
 
         vm.prank(holder);
         escrow.accept(jobId);
@@ -415,7 +428,7 @@ contract WorkEscrowTest is Test {
         uint256 jobId = _redeemAs(holder, 2, 2);
 
         vm.prank(agent);
-        escrow.submitWork(jobId, abi.encode(uint256(5)));
+        escrow.submitWork(jobId, abi.encode(uint256(2), uint256(2)), abi.encode(uint256(5)));
 
         vm.expectRevert(abi.encodeWithSelector(WorkEscrow.OnlyRedeemer.selector, stranger));
         vm.prank(stranger);
@@ -430,7 +443,7 @@ contract WorkEscrowTest is Test {
         uint256 jobId = _redeemAs(holder, 2, 2);
 
         vm.prank(agent);
-        escrow.submitWork(jobId, abi.encode(uint256(5)));
+        escrow.submitWork(jobId, abi.encode(uint256(2), uint256(2)), abi.encode(uint256(5)));
 
         vm.expectRevert(abi.encodeWithSelector(WorkEscrow.DeadlineNotReached.selector, jobId));
         escrow.finalize(jobId);
@@ -446,7 +459,7 @@ contract WorkEscrowTest is Test {
 
     function _submitUnverified(uint256 jobId) internal {
         vm.prank(agent);
-        escrow.submitWork(jobId, abi.encode(uint256(999)));
+        escrow.submitWork(jobId, abi.encode(uint256(2), uint256(2)), abi.encode(uint256(999)));
     }
 
     function test_DisputeRequiresABond() public {
@@ -481,6 +494,7 @@ contract WorkEscrowTest is Test {
         vm.prank(arbiter);
         escrow.resolveDispute(jobId, true);
 
+        _withdrawAs(holder);
         assertEq(usdc.balanceOf(holder), PENALTY + FACE + PENALTY, "bond back, plus the slash payout");
         assertEq(escrow.collateral(), PER_JOULE - (FACE + PENALTY));
         assertEq(escrow.disputeBonds(), 0);
@@ -548,7 +562,7 @@ contract WorkEscrowTest is Test {
         _giveJoules(holder, 1);
         uint256 jobId = _redeemAs(holder, 2, 2);
 
-        _deliver(jobId, 4); // verifier confirms
+        _deliver(jobId, 2, 2, 4); // verifier confirms
 
         vm.expectRevert(abi.encodeWithSelector(WorkEscrow.JobNotSubmitted.selector, jobId));
         vm.prank(holder);
@@ -562,7 +576,7 @@ contract WorkEscrowTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(WorkEscrow.OnlyAgent.selector, holder));
         vm.prank(holder);
-        escrow.submitWork(jobId, abi.encode(uint256(4)));
+        escrow.submitWork(jobId, abi.encode(uint256(2), uint256(2)), abi.encode(uint256(4)));
     }
 
     // --- deadline boundaries: the two windows must be disjoint and complete ---
@@ -574,7 +588,7 @@ contract WorkEscrowTest is Test {
         uint256 jobId = _redeemAs(holder, 2, 2);
 
         vm.roll(deadline);
-        _deliver(jobId, 4);
+        _deliver(jobId, 2, 2, 4);
 
         assertEq(escrow.outstanding(), 0);
     }
@@ -588,7 +602,7 @@ contract WorkEscrowTest is Test {
         vm.roll(deadline + 1);
         vm.expectRevert(abi.encodeWithSelector(WorkEscrow.DeadlinePassed.selector, jobId));
         vm.prank(agent);
-        escrow.submitWork(jobId, abi.encode(uint256(4)));
+        escrow.submitWork(jobId, abi.encode(uint256(2), uint256(2)), abi.encode(uint256(4)));
     }
 
     function test_ClaimTimeoutRevertsAtDeadline() public {
@@ -610,6 +624,7 @@ contract WorkEscrowTest is Test {
 
         vm.roll(deadline + 1);
         escrow.claimTimeout(jobId);
+        _withdrawAs(holder);
 
         assertEq(usdc.balanceOf(holder), FACE + PENALTY);
     }
@@ -625,6 +640,7 @@ contract WorkEscrowTest is Test {
         vm.roll(block.number + WINDOW + 1);
         escrow.claimTimeout(jobId);
 
+        _withdrawAs(holder);
         assertEq(usdc.balanceOf(holder), FACE + PENALTY, "holder is made whole plus the penalty");
         assertEq(escrow.collateral(), collateralBefore - (FACE + PENALTY));
         assertEq(escrow.outstanding(), 9);
@@ -641,8 +657,13 @@ contract WorkEscrowTest is Test {
         vm.prank(stranger);
         escrow.claimTimeout(jobId);
 
-        assertEq(usdc.balanceOf(holder), FACE + PENALTY, "the recorded redeemer is paid");
-        assertEq(usdc.balanceOf(stranger), 0, "the caller gets nothing");
+        assertEq(escrow.owed(holder), FACE + PENALTY, "the recorded redeemer is credited");
+        assertEq(escrow.owed(stranger), 0, "the caller is credited nothing");
+
+        _withdrawAs(holder);
+        assertEq(usdc.balanceOf(holder), FACE + PENALTY);
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.NothingOwed.selector, stranger));
+        _withdrawAs(stranger);
     }
 
     // --- shortfall: unreachable, but not untested ---
@@ -674,6 +695,7 @@ contract WorkEscrowTest is Test {
         emit WorkEscrow.Shortfall(jobId, owed, corrupted);
         escrow.claimTimeout(jobId);
 
+        _withdrawAs(holder);
         assertEq(usdc.balanceOf(holder), corrupted, "redeemer is paid what was actually there");
         assertEq(escrow.collateral(), 0);
         assertEq(escrow.outstanding(), 0, "the job still closes -- no stuck Joule");
@@ -690,7 +712,7 @@ contract WorkEscrowTest is Test {
         uint256 delivered = _redeemAs(holder, 2, 2);
         uint256 timedOut = _redeemAs(holder, 3, 3);
 
-        _deliver(delivered, 4);
+        _deliver(delivered, 2, 2, 4);
         vm.roll(block.number + WINDOW + 1);
         escrow.claimTimeout(timedOut);
 
@@ -700,7 +722,7 @@ contract WorkEscrowTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(WorkEscrow.JobNotOpen.selector, delivered));
         vm.prank(agent);
-        escrow.submitWork(delivered, abi.encode(uint256(4)));
+        escrow.submitWork(delivered, abi.encode(uint256(2), uint256(2)), abi.encode(uint256(4)));
 
         // timed out: likewise
         vm.expectRevert(abi.encodeWithSelector(WorkEscrow.JobNotOpen.selector, timedOut));
@@ -708,7 +730,7 @@ contract WorkEscrowTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(WorkEscrow.JobNotOpen.selector, timedOut));
         vm.prank(agent);
-        escrow.submitWork(timedOut, abi.encode(uint256(6)));
+        escrow.submitWork(timedOut, abi.encode(uint256(3), uint256(3)), abi.encode(uint256(6)));
     }
 
     // --- total wipeout: the solvency property, executed ---
@@ -734,6 +756,8 @@ contract WorkEscrowTest is Test {
         vm.recordLogs();
         for (uint256 i = 0; i < n; i++) {
             escrow.claimTimeout(jobIds[i]);
+            vm.prank(redeemers[i]);
+            escrow.withdraw();
             assertEq(usdc.balanceOf(redeemers[i]), FACE + PENALTY, "every redeemer paid in full");
         }
 
@@ -753,12 +777,13 @@ contract WorkEscrowTest is Test {
     /// @dev The same property must hold at a different legal parameter set.
     function test_TotalWipeoutAtTripleCoverage() public {
         uint256 face = 5e6;
-        uint256 pen = 10e6; // 2x face, so coverage must be 3
-        WorkEscrow e = new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, face, pen, 3, WINDOW, ACCEPT);
+        uint256 pen = 10e6; // 2x face, so each Joule must lock face + pen = 15
+        uint256 perJoule = face + pen;
+        WorkEscrow e =
+            new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, face, pen, perJoule, WINDOW, ACCEPT);
         JouleToken j = e.joule();
 
         uint256 n = 4;
-        uint256 perJoule = 3 * face;
 
         vm.startPrank(agent);
         usdc.approve(address(e), type(uint256).max);
@@ -786,6 +811,8 @@ contract WorkEscrowTest is Test {
         vm.roll(block.number + WINDOW + 1);
         for (uint256 i = 0; i < n; i++) {
             e.claimTimeout(jobIds[i]);
+            vm.prank(redeemers[i]);
+            e.withdraw();
             assertEq(usdc.balanceOf(redeemers[i]), face + pen);
         }
 
@@ -804,7 +831,7 @@ contract WorkEscrowTest is Test {
         (, uint256 jobId) = _setupOneJob(e);
 
         vm.prank(agent);
-        e.submitWork(jobId, abi.encode(uint256(4)));
+        e.submitWork(jobId, abi.encode(uint256(2), uint256(2)), abi.encode(uint256(4)));
 
         (,,, WorkEscrow.Status status) = e.jobs(jobId);
         assertEq(uint8(status), uint8(WorkEscrow.Status.Submitted), "must not revert, must not settle");
@@ -819,7 +846,7 @@ contract WorkEscrowTest is Test {
         (, uint256 jobId) = _setupOneJob(e);
 
         vm.prank(agent);
-        e.submitWork(jobId, hex"deadbeef"); // not even a number
+        e.submitWork(jobId, abi.encode(uint256(2), uint256(2)), hex"deadbeef"); // not even a number
 
         assertEq(e.outstanding(), 0, "a rugged verifier settles anything");
     }
@@ -839,7 +866,7 @@ contract WorkEscrowTest is Test {
     }
 
     function _escrowWithVerifier(IVerifier v) internal returns (WorkEscrow e) {
-        e = new WorkEscrow(IERC20(address(usdc)), v, agent, arbiter, FACE, PENALTY, COVERAGE, WINDOW, ACCEPT);
+        e = new WorkEscrow(IERC20(address(usdc)), v, agent, arbiter, FACE, PENALTY, PER_JOULE, WINDOW, ACCEPT);
     }
 
     function _setupOneJob(WorkEscrow e) internal returns (JouleToken j, uint256 jobId) {
@@ -871,4 +898,118 @@ contract WorkEscrowTest is Test {
         vm.prank(agent);
         escrow.unstake(1);
     }
+    // --- C-1: the spec is hashed, not stored ---
+
+    function test_SpecIsNotStoredOnlyItsHash() public {
+        _stakeAndIssue(1);
+        _giveJoules(holder, 1);
+        bytes memory spec = abi.encode(uint256(2), uint256(2));
+        uint256 jobId = _redeemAs(holder, 2, 2);
+
+        assertEq(escrow.specHashes(jobId), keccak256(spec), "only the hash is kept");
+    }
+
+    function test_SubmitWorkRejectsAMismatchedSpec() public {
+        _stakeAndIssue(1);
+        _giveJoules(holder, 1);
+        uint256 jobId = _redeemAs(holder, 2, 2);
+
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.SpecMismatch.selector, jobId));
+        vm.prank(agent);
+        escrow.submitWork(jobId, abi.encode(uint256(3), uint256(3)), abi.encode(uint256(6)));
+    }
+
+    /// @dev The escrow bounds its own exposure rather than trusting the verifier
+    ///      to reject long specs -- a variable-length verifier would otherwise
+    ///      let a redeemer make delivery arbitrarily expensive.
+    function test_OversizedSpecIsRejected() public {
+        WorkEscrow e = _escrowWithVerifier(new AlwaysTrueVerifier());
+        vm.startPrank(agent);
+        usdc.approve(address(e), type(uint256).max);
+        e.stake(PER_JOULE);
+        e.issue(1);
+        e.joule().approve(address(e), type(uint256).max);
+
+        uint256 max = e.MAX_SPEC_BYTES();
+        bytes memory tooBig = new bytes(max + 1);
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.SpecTooLarge.selector, max + 1, max));
+        e.redeem(tooBig);
+
+        e.redeem(new bytes(max)); // exactly at the bound is fine
+        vm.stopPrank();
+    }
+
+    // --- C-2: payouts are pull, so one blocked recipient cannot brick a job ---
+
+    function test_WithdrawRevertsWhenNothingOwed() public {
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.NothingOwed.selector, stranger));
+        vm.prank(stranger);
+        escrow.withdraw();
+    }
+
+    function test_CreditSurvivesUntilWithdrawn() public {
+        _stakeAndIssue(1);
+        _giveJoules(holder, 1);
+        uint256 jobId = _redeemAs(holder, 2, 2);
+        vm.roll(block.number + WINDOW + 1);
+        escrow.claimTimeout(jobId);
+
+        assertEq(escrow.owed(holder), FACE + PENALTY);
+        assertEq(escrow.totalOwed(), FACE + PENALTY);
+        assertEq(usdc.balanceOf(holder), 0, "nothing is pushed");
+
+        assertEq(_withdrawAs(holder), FACE + PENALTY);
+        assertEq(escrow.owed(holder), 0);
+        assertEq(escrow.totalOwed(), 0);
+    }
+
+    // --- C-3: the constructor validates its inputs ---
+
+    function test_ConstructorRejectsZeroAddresses() public {
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.ZeroAddress.selector, "collateralToken"));
+        new WorkEscrow(IERC20(address(0)), verifier, agent, arbiter, FACE, PENALTY, PER_JOULE, WINDOW, ACCEPT);
+
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.ZeroAddress.selector, "verifier"));
+        new WorkEscrow(IERC20(address(usdc)), IVerifier(address(0)), agent, arbiter, FACE, PENALTY, PER_JOULE, WINDOW, ACCEPT);
+
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.ZeroAddress.selector, "agent"));
+        new WorkEscrow(IERC20(address(usdc)), verifier, address(0), arbiter, FACE, PENALTY, PER_JOULE, WINDOW, ACCEPT);
+
+        // A zero arbiter would leave every disputed job permanently unresolvable.
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.ZeroAddress.selector, "arbiter"));
+        new WorkEscrow(IERC20(address(usdc)), verifier, agent, address(0), FACE, PENALTY, PER_JOULE, WINDOW, ACCEPT);
+    }
+
+    function test_ConstructorRejectsZeroFaceValue() public {
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.InvalidParameter.selector, "faceValue"));
+        new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, 0, PENALTY, PER_JOULE, WINDOW, ACCEPT);
+    }
+
+    /// @dev An unbounded window would overflow the uint64 deadline and truncate
+    ///      to the current block, turning every Joule into a free slash.
+    function test_ConstructorRejectsBadWindows() public {
+        uint256 max = escrow.MAX_WINDOW_BLOCKS();
+
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.InvalidParameter.selector, "deliveryBlocks"));
+        new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, FACE, PENALTY, PER_JOULE, 0, ACCEPT);
+
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.InvalidParameter.selector, "deliveryBlocks"));
+        new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, FACE, PENALTY, PER_JOULE, max + 1, ACCEPT);
+
+        vm.expectRevert(abi.encodeWithSelector(WorkEscrow.InvalidParameter.selector, "acceptBlocks"));
+        new WorkEscrow(IERC20(address(usdc)), verifier, agent, arbiter, FACE, PENALTY, PER_JOULE, WINDOW, 0);
+    }
+
+    // --- C-5: a broken verifier is diagnosable ---
+
+    function test_RevertingVerifierEmitsVerifierReverted() public {
+        WorkEscrow e = _escrowWithVerifier(new RevertingVerifier());
+        (, uint256 jobId) = _setupOneJob(e);
+
+        vm.expectEmit(true, false, false, false, address(e));
+        emit WorkEscrow.VerifierReverted(jobId);
+        vm.prank(agent);
+        e.submitWork(jobId, abi.encode(uint256(2), uint256(2)), abi.encode(uint256(4)));
+    }
+
 }
