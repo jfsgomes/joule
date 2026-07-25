@@ -135,23 +135,45 @@ agent/                    # TypeScript delivery agent
 
 ### WorkEscrow key functions
 
+Full ledger with running balances: [docs/MECHANISM.md](./docs/MECHANISM.md).
+
 | Function | Actor | Effect |
 |---|---|---|
 | `stake(amount)` | Agent | deposits USDC collateral |
-| `issue(count, askPrice)` | Agent | mints Joules if coverage ratio holds; buyers purchase at ask |
-| `redeem(jobSpec)` | Holder | locks 1 Joule, starts delivery clock |
-| `submitWork(jobId, resultHash)` | Agent | records delivery before deadline |
-| `accept(jobId)` / auto-accept via verifier | Holder / anyone | burns Joule, releases revenue |
-| `claimTimeout(jobId)` | Anyone | after deadline with no submission: refund + penalty from collateral |
+| `issue(count)` | Agent | mints `count` Joules **to the agent** if coverage holds |
+| `redeem(jobSpec)` | Holder | transfers 1 Joule into escrow custody, starts delivery clock |
+| `submitWork(jobId, spec, result)` | Agent | verifier confirms → settles immediately; cannot confirm → opens the acceptance window. The spec is re-supplied and checked against its stored hash |
+| `accept(jobId)` | Redeemer | settles an unverified result early |
+| `finalize(jobId)` | Anyone | settles an unchallenged result once its window closes |
+| `dispute(jobId)` | Redeemer | challenges an unverified result; costs a bond of `penalty` |
+| `resolveDispute(jobId, upheld)` | Arbiter | rules on a challenge |
+| `claimTimeout(jobId)` | Anyone | after deadline with no submission: burns Joule, **credits** redeemer `faceValue + penalty` from collateral |
+| `withdraw()` | Anyone credited | collects a credited payout. Payouts are pull, not push, so a blocklisted recipient cannot brick a job |
 | `unstake(amount)` | Agent | withdraw only collateral not backing outstanding Joules |
+
+**`issue()` is a pure mint — there is no price argument and no primary market.** The agent receives the Joules and sells them into the Uniswap pool. The escrow never handles a sale, so it never handles sale proceeds; the collateral is the entire guarantee. An `askPrice` here would be a second pricing path competing with the pool, and price-setting by the agent is the thing the thesis argues against.
+
+### Parameters (immutable, set at deployment)
+
+| Parameter | Meaning | Demo value |
+|---|---|---|
+| `faceValue` | Agent's declared liability per Joule — the guaranteed refund on default. **Not the price.** | 5 USDC |
+| `penalty` | Extra paid to the redeemer on default | 5 USDC |
+| `collateralPerJoule` | Collateral locked per outstanding Joule. **Absolute, not a multiple** — an integer ratio cannot express 1.2× and would round a 6-unit liability up to a 10-unit lock | 10 USDC |
+| `deliveryBlocks` | Delivery window, **in blocks** so the demo is countable | 10 (~2 min) |
+| `acceptBlocks` | Acceptance window for an unverified result | 5 (~1 min) |
+| `arbiter` | Rules on disputed jobs. **The system's one centralised trust assumption** | a demo address |
+
+Solvency requires `collateralPerJoule ≥ faceValue + penalty`, checked exactly in the constructor with no rounding. The demo values sit precisely on that bound — settling one Joule frees exactly what one default costs. Raising `penalty` without raising `collateralPerJoule` breaks solvency and the constructor refuses to deploy.
 
 ### Invariants (test these)
 
 - Joules can only be minted/burned by `WorkEscrow`.
-- `collateral >= coverageRatio × faceValue × outstandingJoules` at all times.
-- Locked (mid-redemption) Joules are non-transferable.
+- `collateral >= collateralPerJoule × outstandingJoules` at all times.
+- A redeemed Joule sits in escrow custody, so it cannot be moved by anyone — custody *is* the lock, and no transfer hook on the token is needed.
 - An agent can never unstake collateral backing outstanding Joules.
 - `claimTimeout` is callable by anyone but pays only the redeemer.
+- Defaulting is never profitable while `salePrice < faceValue + penalty`.
 
 ---
 
@@ -180,7 +202,6 @@ agent/                    # TypeScript delivery agent
 - [ ] **v4 hook**: escrow-aware pool, agent as collateral-constrained market maker, swap fees route to collateral. *Technically interesting; no prize attached at this event.* Cheap to attempt only because the must-have pool is already v4 — see note below.
 - [ ] IPFS + ENS deploy
 - [ ] Multiple agents / multiple Joule tokens with a registry
-- [ ] Optimistic dispute path with an arbiter stub
 
 > **Why the must-have pool is v4, not v3:** if the baseline pool were v3, adding the hook later would mean rewriting the integration on a different architecture. Building vanilla v4 first makes the hook purely additive — write it, attach it. Same must-have cost, far cheaper stretch.
 
@@ -195,29 +216,34 @@ agent/                    # TypeScript delivery agent
 
 ## Milestones
 
-Contracts fully done before any frontend work, per priority call.
+Build everything against a **local fork of Sepolia**, then touch the live chain once. This is the Scaffold-ETH three-phase model: phase 1 is a fork with real Uniswap v4 deployed, phase 2 is live contracts with a local UI, phase 3 is the public frontend.
 
-| # | Milestone | Definition of done |
-|---|---|---|
-| 0 | Toolchain | `foundryup` installed; `create-eth` scaffold committed targeting Sepolia; `.gitignore` covers `.env`, `broadcast/`, `cache/`; deployer funded from a Sepolia faucet; all six v4 addresses verified with `cast code` |
-| 1 | Contracts core | All four contracts written; `forge test` green on happy path + timeout slash |
-| 2 | Test depth | Fuzz on all math, all five invariants passing, fork test against real v4 |
-| 3 | Deployed + verified | Live on Sepolia, verified on Etherscan, pokeable via abi.ninja |
-| 4 | Pool live | `JOULE/USDC` v4 pool seeded; swap works from a script |
-| 5 | Agent loop | Demo agent auto-delivers on `Redeemed` events |
-| 6 | Frontend functional | Buy → redeem → settle end to end; Trading API driving the buy |
-| 7 | Frontend beautiful | Design pass, price chart, SE2 branding gone, Vercel deploy |
-| 8 | Slash demo | Timeout path demoable on purpose |
-| 9 | Prize hygiene | `FEEDBACK.md`, README line refs, form submitted |
-| 10 | Stretch | v4 hook / IPFS+ENS, only if 0–9 are done |
+Note the Sepolia deploy is **not** last. A public frontend URL pointing at a laptop's anvil is not a demo, so the deploy has to land between "frontend works locally" and "frontend deployed".
+
+| # | Milestone | Definition of done | Status |
+|---|---|---|---|
+| 0 | Toolchain | `foundryup` installed; scaffold committed; `.gitignore` covers `.env`, `broadcast/`, `cache/`; deployer funded; all six v4 addresses verified with `cast code` | ✅ |
+| 1 | Contracts core | All four contracts written; `forge test` green on happy path, timeout slash, and the optimistic/dispute paths | ✅ |
+| 2 | Test depth | Fuzz on all math, all five invariants passing | ✅ *(fork test deferred to 3 — nothing touches Uniswap yet)* |
+| 3 | Pool live | `JOULE/USDC` v4 pool seeded on a Sepolia fork; swap works from a script; fork test against real v4 | ← next |
+| 4 | Agent loop | Demo agent auto-delivers on `Redeemed` events | |
+| 5 | Frontend functional | Buy → redeem → settle end to end against the fork; Trading API driving the buy | |
+| 6 | Deployed + verified | Live on Sepolia, verified on Etherscan, pokeable via abi.ninja; local UI repointed at it | |
+| 7 | Frontend beautiful | Design pass, price chart, SE2 branding gone, Vercel deploy | |
+| 8 | Slash demo | Timeout path demoable on purpose | |
+| 9 | Prize hygiene | `FEEDBACK.md`, README line refs, form submitted | |
+| 10 | Stretch | v4 hook / IPFS+ENS, only if 0–9 are done | |
+
+**To work on the fork:** set `targetNetworks: [chains.foundry]` in `scaffold.config.ts` and run `FORK_URL=sepolia yarn fork`. The env var is required — `yarn fork sepolia` silently forks mainnet.
 
 ---
 
 ## Demo Script (3 min)
 
-1. Agent A stakes 100 USDC, issues 10 Joules at 5 USDC. Pool goes live.
+1. Agent A stakes 100 USDC, mints 10 Joules, seeds the pool at ~5 USDC. Pool goes live.
 2. Human buys Joules via the Trading API → price ticks up on the chart. "This is price discovery for agent labor."
 3. Agent B redeems a Joule with job `sum(2,2)`. Demo agent delivers, verifier auto-accepts, token burns.
+   - **Gap to close:** `sum(2,2)` only ever takes the *verified* path, so the acceptance window, the dispute bond and the arbiter never appear on stage. That machinery is built and tested but invisible. Add a step — redeem something the verifier cannot confirm, show it enter the window — or at least a slide. It is the answer to "what about work a contract can't check?", which is the obvious question.
 4. Kill the demo agent. Redeem another Joule. Deadline passes → `claimTimeout` → refund + penalty visibly leaves the agent's stake. "This is why the promise is credible."
 5. Close on the pool chart: market price of Agent A's work, discovered, not set.
 
@@ -227,8 +253,9 @@ Optional flourish: show the pool in the real Uniswap web interface — both shor
 
 ## Open Questions
 
-- Coverage ratio and penalty size: start with 2× and penalty = face value; revisit if capital efficiency looks silly in the demo.
-- Should issuance revenue be held until delivery, or paid to the agent immediately? (Safer: held. Simpler demo: immediate.)
+- ~~Coverage ratio and penalty size~~ **Resolved:** 2× with penalty = face value is the tight solvency solution, not a guess. See MECHANISM.md.
+- ~~Should issuance revenue be held or paid immediately?~~ **Resolved: moot.** Sales happen in the pool, so the escrow never receives proceeds and cannot hold them. Collateral is the sole guarantee.
+- Seed the pool single-sided (JOULE only, range above spot) to avoid committing a USDC leg? Cheaper and sells at a better average, but makes the market one-directional — which breaks "agent buys back below floor" and gives a monotonic price chart. Decide at Milestone 4.
 - Delivery window: express it in **blocks (~10, i.e. ~2 min on Sepolia)**, not wall-clock seconds — the timeout demo should be paced in units the audience can count, and it stays correct if we fall back to a faster chain. 24h is meaningless in a demo.
 - Trading API key: acquisition process, rate limits, and approval delay are undocumented on the supported-chains page. **Resolve in Milestone 0** — if there is an approval queue, it blocks the prize deliverable and we need to be in it on day one.
 - Does the Trading API quote a pool as thin as ours, or does its router refuse low-liquidity pairs? Test early; the fallback is direct Universal Router calls, which weakens the prize story.

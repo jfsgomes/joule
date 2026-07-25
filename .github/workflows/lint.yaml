@@ -76,3 +76,11 @@ jobs:
 
       - name: Check typings on nextjs
         run: yarn next:check-types
+
+      # Lint and type-check both passed for the entire life of this project
+      # while `next build` failed outright -- first on unresolved optional peer
+      # dependencies of @coinbase/cdp-sdk, then on Node 25's non-functional
+      # localStorage global during prerender. Neither is visible to eslint or
+      # tsc. This step is what makes a green tick mean the app can be deployed.
+      - name: Build nextjs
+        run: yarn next:build

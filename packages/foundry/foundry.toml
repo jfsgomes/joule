@@ -7,6 +7,17 @@ extra_output = ["evm.bytecode.opcodes"]
 optimizer = true
 optimizer_runs = 200
 
+[fuzz]
+runs = 512
+
+[invariant]
+runs = 256
+depth = 50
+# The handler wraps every call in try/catch: a revert is a legitimate outcome
+# (unstake beyond coverage, submitWork past a deadline). invariant_CallSummary
+# is what stops a run of nothing but reverts from passing vacuously.
+fail_on_revert = false
+
 
 [rpc_endpoints]
 default_network = "http://127.0.0.1:8545"

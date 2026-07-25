@@ -2,7 +2,7 @@
 pragma solidity ^0.8.19;
 
 import "./DeployHelpers.s.sol";
-import { DeployYourContract } from "./DeployYourContract.s.sol";
+import { DeployWorkEscrow } from "./DeployWorkEscrow.s.sol";
 
 /**
  * @notice Main deployment script for all contracts
@@ -11,17 +11,11 @@ import { DeployYourContract } from "./DeployYourContract.s.sol";
  * Example: yarn deploy # runs this script(without`--file` flag)
  */
 contract DeployScript is ScaffoldETHDeploy {
-  function run() external {
-    // Deploys all your contracts sequentially
-    // Add new deployments here when needed
-
-    
-    DeployYourContract deployYourContract = new DeployYourContract();
-    deployYourContract.run();
-
-
-    // Deploy another contract
-    // DeployMyContract myContract = new DeployMyContract();
-    // myContract.run();
-  }
+    function run() external {
+        // Deploys MockUSDC, SumVerifier and WorkEscrow. JouleToken is not listed
+        // because WorkEscrow deploys it from its own constructor -- that is what
+        // makes the escrow its permanent and only minter.
+        DeployWorkEscrow deployWorkEscrow = new DeployWorkEscrow();
+        deployWorkEscrow.run();
+    }
 }
