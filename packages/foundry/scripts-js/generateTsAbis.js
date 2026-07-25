@@ -202,6 +202,52 @@ function processAllDeployments(broadcastPath) {
   return allContracts;
 }
 
+/**
+ * Merge contracts deployed INSIDE another contract's constructor.
+ *
+ * processAllDeployments() only sees top-level CREATE/CREATE2 transactions in
+ * broadcast/. A contract that another contract news up in its own constructor
+ * produces no such transaction, so it is invisible here no matter how many
+ * times it is deployed.
+ *
+ * Joule hits this with JouleToken, which WorkEscrow deploys from its own
+ * constructor so that the minter is fixed by construction. Deploy scripts
+ * declare such contracts by writing deployments/<chainId>.nested.json —
+ * a flat { "ContractName": "0xaddress" } map — which this merges in, taking the
+ * ABI from the compiled artifact exactly as a normal deployment would.
+ *
+ * deployedOnBlock is intentionally absent: it only feeds the default fromBlock
+ * of useScaffoldEventHistory, and a nested contract's creation block is always
+ * its parent's. Add it to the manifest if that ever matters.
+ */
+function mergeNestedDeployments(allGeneratedContracts, deploymentsPath) {
+  const SUFFIX = ".nested.json";
+
+  getFiles(deploymentsPath)
+    .filter((file) => file.endsWith(SUFFIX))
+    .forEach((file) => {
+      const chainId = file.slice(0, -SUFFIX.length);
+      const nested = JSON.parse(readFileSync(join(deploymentsPath, file)));
+
+      Object.entries(nested).forEach(([contractName, address]) => {
+        const artifact = getArtifactOfContract(contractName);
+        if (!artifact) return;
+
+        if (!allGeneratedContracts[chainId]) allGeneratedContracts[chainId] = {};
+
+        // A real broadcast record always wins: if the contract ever does get
+        // deployed top-level, that address is the authoritative one.
+        if (allGeneratedContracts[chainId][contractName]) return;
+
+        allGeneratedContracts[chainId][contractName] = {
+          address,
+          abi: artifact.abi,
+          inheritedFunctions: getInheritedFunctions(artifact),
+        };
+      });
+    });
+}
+
 function main() {
   const current_path_to_broadcast = join(__dirname, "..", "broadcast");
   const current_path_to_deployments = join(__dirname, "..", "deployments");
@@ -223,6 +269,9 @@ function main() {
   const allGeneratedContracts = processAllDeployments(
     current_path_to_broadcast
   );
+
+  // Then fold in contracts that have no broadcast record of their own.
+  mergeNestedDeployments(allGeneratedContracts, current_path_to_deployments);
 
   // Update contract keys based on deployments if they exist
   Object.entries(allGeneratedContracts).forEach(([chainId, contracts]) => {

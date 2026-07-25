@@ -14,8 +14,8 @@ Verified against the [Lisbon 2026 prize page](https://ethglobal.com/events/lisbo
 
 ### Qualification checklist (cheap, easy to forget, disqualifying if missed)
 
-- [ ] Public GitHub repo, open source, MIT
-- [ ] `FEEDBACK.md` at repo root — honest notes on the Uniswap developer experience
+- [x] Public GitHub repo, open source, MIT — repo is public and `LICENSE` is a standard MIT text. **But** GitHub's API reported no detected license on 2026-07-25, and the sidebar badge is what a judge actually looks at. Confirm it renders before submitting.
+- [x] `FEEDBACK.md` at repo root — honest notes on the Uniswap developer experience. Two substantive findings, both reproducible: the `v4-periphery@main` vs deployed-router ABI mismatch, and a v4 pool with zero *active* liquidity being invisible to the Trading API.
 - [ ] Uniswap Developer Feedback Form submitted, linking to `FEEDBACK.md`
 - [ ] README points to specific contracts **and line numbers** for the API integration
 
@@ -225,8 +225,8 @@ Note the Sepolia deploy is **not** last. A public frontend URL pointing at a lap
 | 0 | Toolchain | `foundryup` installed; scaffold committed; `.gitignore` covers `.env`, `broadcast/`, `cache/`; deployer funded; all six v4 addresses verified with `cast code` | ✅ |
 | 1 | Contracts core | All four contracts written; `forge test` green on happy path, timeout slash, and the optimistic/dispute paths | ✅ |
 | 2 | Test depth | Fuzz on all math, all five invariants passing | ✅ *(fork test deferred to 3 — nothing touches Uniswap yet)* |
-| 3 | Pool live | `JOULE/USDC` v4 pool seeded on a Sepolia fork; swap works from a script; fork test against real v4 | ← next |
-| 4 | Agent loop | Demo agent auto-delivers on `Redeemed` events | |
+| 3 | Pool live | `JOULE/USDC` v4 pool seeded on a Sepolia fork; swap works from a script; fork test against real v4 | ✅ |
+| 4 | Agent loop | Demo agent auto-delivers on `Redeemed` events | ← next |
 | 5 | Frontend functional | Buy → redeem → settle end to end against the fork; Trading API driving the buy | |
 | 6 | Deployed + verified | Live on Sepolia, verified on Etherscan, pokeable via abi.ninja; local UI repointed at it | |
 | 7 | Frontend beautiful | Design pass, price chart, SE2 branding gone, Vercel deploy | |
@@ -255,7 +255,10 @@ Optional flourish: show the pool in the real Uniswap web interface — both shor
 
 - ~~Coverage ratio and penalty size~~ **Resolved:** 2× with penalty = face value is the tight solvency solution, not a guess. See MECHANISM.md.
 - ~~Should issuance revenue be held or paid immediately?~~ **Resolved: moot.** Sales happen in the pool, so the escrow never receives proceeds and cannot hold them. Collateral is the sole guarantee.
-- Seed the pool single-sided (JOULE only, range above spot) to avoid committing a USDC leg? Cheaper and sells at a better average, but makes the market one-directional — which breaks "agent buys back below floor" and gives a monotonic price chart. Decide at Milestone 4.
+- ~~Seed the pool single-sided or two-sided?~~ **Resolved 2026-07-25: hybrid, with both ranges meeting at spot.** All 10 JOULE as a range order from spot up to 6.00 funded with **zero USDC**, plus a **20 USDC bid** from spot down to 4.00 funded with **zero JOULE**. The bid is not needed to *sell* Joules — it is needed so anyone can sell one *back*, which the pure single-sided design makes impossible and which both the "agent buys back below floor" should-have and a non-monotonic price chart require. 20 USDC instead of the 50 a symmetric two-sided seed would cost. Params live in `packages/foundry/script/JouleAddresses.sol`.
+- ~~Does the Trading API quote a pool as thin as ours?~~ **Resolved 2026-07-25: yes — thinness was never the problem.** The API quoted a ~$70 pool without complaint. What it will not quote is a pool with **zero active liquidity at the opening tick**, which is exactly what a textbook single-sided range placed *above* spot produces. The first seed opened at 4.90 with the wall at `[5.00, 6.00]` and the bid at `[4.00, 4.80]`; every contract-level test passed and the API returned `404 ResourceNotFound`. Adding a position spanning spot — about $5 against a $70 pool — flipped it to a working quote, buy and sell, plus executable `/v1/swap` calldata.
+  - Also established: the API routes v4 on Sepolia (`protocols: ["V4"]`, with a `V4_NO_HOOKS` option matching our pool), non-standard fee tiers route fine, and it encodes calldata for the *deployed* Universal Router — so it sidesteps the periphery-`main` ABI mismatch documented in `script/SwapJoule.s.sol`.
+  - The fix: pin both ranges to the opening tick so they meet with no gap. Subtlety worth keeping — a position is live on `[tickLower, tickUpper)`, so only the range pinned at its **lower** bound is active, and which one that is **flips with the token ordering**. `JoulePoolSeeder.plan` now asserts one of them is live, and the fork tests check it under both orderings.
 - Delivery window: express it in **blocks (~10, i.e. ~2 min on Sepolia)**, not wall-clock seconds — the timeout demo should be paced in units the audience can count, and it stays correct if we fall back to a faster chain. 24h is meaningless in a demo.
 - Trading API key: acquisition process, rate limits, and approval delay are undocumented on the supported-chains page. **Resolve in Milestone 0** — if there is an approval queue, it blocks the prize deliverable and we need to be in it on day one.
 - Does the Trading API quote a pool as thin as ours, or does its router refuse low-liquidity pairs? Test early; the fallback is direct Universal Router calls, which weakens the prize story.

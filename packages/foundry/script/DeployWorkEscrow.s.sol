@@ -67,8 +67,34 @@ contract DeployWorkEscrow is ScaffoldETHDeploy {
 
         JouleToken joule = escrow.joule();
 
+        _recordNestedDeployment("JouleToken", address(joule));
         _assertPoolTokenOrdering(address(joule), address(usdc));
         _report(address(usdc), address(verifier), address(escrow), address(joule), arbiter);
+    }
+
+    /**
+     * @dev Records a contract deployed INSIDE another contract's constructor so
+     *      the frontend can see it.
+     *
+     *      SE-2's ABI generator walks `broadcast/` for top-level CREATE
+     *      transactions. JouleToken has none -- WorkEscrow news it up in its own
+     *      constructor, which is the whole point: it fixes the minter to the
+     *      escrow by construction rather than by a setter. So the token is
+     *      invisible to the generator, and the frontend needs it, because a
+     *      holder must `approve` before every redeem.
+     *
+     *      The obvious fix -- deploy JouleToken separately and pass it in --
+     *      would trade that single-permanent-minter property for build
+     *      convenience. This writes a sidecar manifest instead, which
+     *      scripts-js/generateTsAbis.js merges. Rewritten on every deploy, so
+     *      the address can never go stale against a redeployed escrow.
+     */
+    function _recordNestedDeployment(string memory name, address addr) internal {
+        string memory obj = "nested";
+        string memory out = vm.serializeAddress(obj, name, addr);
+        vm.writeJson(
+            out, string.concat(vm.projectRoot(), "/deployments/", vm.toString(block.chainid), ".nested.json")
+        );
     }
 
     /**

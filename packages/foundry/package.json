@@ -16,7 +16,9 @@
     "format": "make format",
     "postinstall": "shx cp -n .env.example .env",
     "lint": "make lint",
-    "test": "forge test",
+    "test": "forge test --no-match-path 'test/fork/*'",
+    "test:fork": "forge test --match-path 'test/fork/*' -vv",
+    "test:all": "forge test",
     "verify": "make verify RPC_URL=${1:-localhost}"
   },
   "dependencies": {

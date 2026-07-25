@@ -174,12 +174,14 @@ Place a range **entirely above spot** and the position is 100% JOULE the moment 
 ### Concretely
 
 - Initialize the pool at 4.90 USDC/JOULE
-- Add all 10 JOULE across `[5.00, 6.00]`
+- Add all 10 JOULE across `[4.90, 6.00]` — starting **at** spot, not above it
 - Supply no USDC
 
-Buyers push price up from 4.90; crossing 5.00 they begin filling against the agent's inventory. By 6.00 all ten Joules are sold and the position is pure USDC.
+Buyers fill against the agent's inventory immediately. By 6.00 all ten Joules are sold and the position is pure USDC.
 
-Average execution is the **geometric** mean, not the arithmetic one: `√(5 × 6) ≈ 5.48`. That falls straight out of the concentrated-liquidity math — sweeping a full range converts `L(1/√Pa − 1/√Pb)` of token0 into `L(√Pb − √Pa)` of token1, and the ratio simplifies to exactly `√(Pa·Pb)`.
+Average execution is the **geometric** mean, not the arithmetic one: `√(4.90 × 6.00) ≈ 5.42`. That falls straight out of the concentrated-liquidity math — sweeping a full range converts `L(1/√Pa − 1/√Pb)` of token0 into `L(√Pb − √Pa)` of token1, and the ratio simplifies to exactly `√(Pa·Pb)`.
+
+The range starts exactly at spot rather than above it, and that detail is load-bearing — see the third gotcha below. At the boundary the position still holds precisely zero USDC, because `L(√P − √Pa)` is zero when `P = Pa`, so nothing about the zero-capital claim is given up.
 
 | | Two-sided seed | Single-sided range |
 |---|---|---|
@@ -190,11 +192,17 @@ Average execution is the **geometric** mean, not the arithmetic one: `√(5 × 6
 
 A third less capital, at a better average price, for the same sale.
 
-### Two things that will bite
+### Three things that will bite
 
 **Token ordering is by address, not by choice.** Uniswap sorts so `token0 < token1` numerically, so whether JOULE is token0 or token1 depends on the deployed addresses — and that flips which tick direction "above spot" means. Get it backwards and you place a *buy* wall where you meant a sell wall, which fills instantly against you. Since we deploy `JouleToken`, either branch on `address(joule) < address(usdc)` at deploy time, or mine a CREATE2 salt to force the ordering. **Assert the ordering in the deploy script rather than assuming it.**
 
 **A single-sided range is a one-directional market.** With no liquidity below spot, nobody can sell a Joule back. Fine for demo step 2 (buy, watch price rise), but it breaks the should-have *"agent buys back own Joules below floor"*, and a chart that only goes up is a weaker story than a two-sided market. Supporting sells needs a second USDC-side range below spot — which costs USDC again.
+
+**A gap at spot makes the pool invisible to routers.** This one cost us a Sepolia deployment to find. Place the sell range strictly *above* spot and the pool reports `getLiquidity() == 0` at the current tick — there is inventory, but none of it is *active*. Uniswap v4 itself does not care: a swap simply gaps to the nearest initialised tick and fills there, so every contract-level test passes. The **Uniswap Trading API refuses to quote it at all**, returning `404 ResourceNotFound`.
+
+Confirmed by experiment on Sepolia: the identical pool, holding ~$70 of inventory, went from `404` to a working quote after minting a position spanning spot worth about five dollars. Aggregate depth barely moved. Thin is fine; a hole at spot is fatal.
+
+The fix is to pin both ranges to the opening tick so they **meet** at spot with no gap. Note the asymmetry that makes this subtle: a position is active on the half-open interval `[tickLower, tickUpper)`, so of two ranges meeting at spot only the one pinned at its *lower* bound is live — and **which one that is flips with the token ordering**. Pinning only the sell wall works when JOULE is token0 and silently fails when it is token1.
 
 ### What the stretch-goal hook automates
 
