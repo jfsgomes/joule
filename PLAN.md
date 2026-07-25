@@ -142,8 +142,11 @@ Full ledger with running balances: [docs/MECHANISM.md](./docs/MECHANISM.md).
 | `stake(amount)` | Agent | deposits USDC collateral |
 | `issue(count)` | Agent | mints `count` Joules **to the agent** if coverage holds |
 | `redeem(jobSpec)` | Holder | transfers 1 Joule into escrow custody, starts delivery clock |
-| `submitWork(jobId, resultHash)` | Agent | records delivery before deadline |
-| `accept(jobId)` / auto-accept via verifier | Holder / anyone | burns the locked Joule; frees coverage requirement |
+| `submitWork(jobId, result)` | Agent | verifier confirms → settles immediately; cannot confirm → opens the acceptance window |
+| `accept(jobId)` | Redeemer | settles an unverified result early |
+| `finalize(jobId)` | Anyone | settles an unchallenged result once its window closes |
+| `dispute(jobId)` | Redeemer | challenges an unverified result; costs a bond of `penalty` |
+| `resolveDispute(jobId, upheld)` | Arbiter | rules on a challenge |
 | `claimTimeout(jobId)` | Anyone | after deadline with no submission: burns Joule, pays redeemer `faceValue + penalty` from collateral |
 | `unstake(amount)` | Agent | withdraw only collateral not backing outstanding Joules |
 
@@ -157,6 +160,8 @@ Full ledger with running balances: [docs/MECHANISM.md](./docs/MECHANISM.md).
 | `penalty` | Extra paid to the redeemer on default | 5 USDC |
 | `coverageRatio` | Collateral multiple backing each outstanding Joule | 2× |
 | `deliveryBlocks` | Delivery window, **in blocks** so the demo is countable | 10 (~2 min) |
+| `acceptBlocks` | Acceptance window for an unverified result | 5 (~1 min) |
+| `arbiter` | Rules on disputed jobs. **The system's one centralised trust assumption** | a demo address |
 
 Solvency requires `coverageRatio ≥ (faceValue + penalty) / faceValue`. At `penalty = faceValue` that is exactly 2×, which is why the demo values are the tight solution rather than a guess — burning one Joule frees precisely what one default costs. Raising `penalty` without raising `coverageRatio` breaks solvency.
 
@@ -196,7 +201,6 @@ Solvency requires `coverageRatio ≥ (faceValue + penalty) / faceValue`. At `pen
 - [ ] **v4 hook**: escrow-aware pool, agent as collateral-constrained market maker, swap fees route to collateral. *Technically interesting; no prize attached at this event.* Cheap to attempt only because the must-have pool is already v4 — see note below.
 - [ ] IPFS + ENS deploy
 - [ ] Multiple agents / multiple Joule tokens with a registry
-- [ ] Optimistic dispute path with an arbiter stub
 
 > **Why the must-have pool is v4, not v3:** if the baseline pool were v3, adding the hook later would mean rewriting the integration on a different architecture. Building vanilla v4 first makes the hook purely additive — write it, attach it. Same must-have cost, far cheaper stretch.
 

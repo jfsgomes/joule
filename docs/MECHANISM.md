@@ -206,6 +206,56 @@ A v4 hook runs contract logic on every swap. Rather than the agent pre-committin
 
 The static single-sided range is that behaviour frozen at a single moment. The hook makes it responsive to the escrow's actual state.
 
+## Settlement: two paths, chosen by the verifier
+
+`redeem` refuses any spec the verifier cannot parse, and it is worth being precise about what that does and does not buy. It stops a holder opening a job whose spec is malformed — the griefing attack `isValidSpec` exists for. It does **not** mean every accepted job can be decided by an onchain function.
+
+So settlement has two paths, and which one a job takes is decided by the verifier rather than by anyone's opinion:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Open: redeem
+    Open --> Settled: submitWork, verifier confirms
+    Open --> Submitted: submitWork, verifier cannot confirm
+    Open --> Slashed: claimTimeout, nothing submitted
+    Submitted --> Settled: accept (redeemer) / finalize (anyone, after window)
+    Submitted --> Disputed: dispute (redeemer, posts bond)
+    Disputed --> Slashed: arbiter upholds, bond refunded
+    Disputed --> Settled: arbiter rejects, bond forfeited to collateral
+```
+
+**Verified path.** The verifier confirms the result and the job settles inside `submitWork`. No window, no counterparty, no delay. `sum(2,2)` takes this path, and so would a zk-proof verifier.
+
+**Optimistic path.** The verifier cannot confirm. The job enters an acceptance window: the redeemer may accept early, challenge it, or do nothing — in which case anyone may finalize once the window closes. This is what lets the escrow take work no onchain function can adjudicate.
+
+### Why the challenge half is not optional
+
+Two designs look simpler and both are broken:
+
+**Auto-accept with no challenge.** Submitting *anything* stops the timeout clock. An agent would send one garbage byte, wait out the window, and settle — the penalty would become unreachable for exactly the jobs the optimistic path exists to support. `test_SubmittingAnythingBlocksTheTimeout` pins the mechanic this defends against.
+
+**An unbonded right of refusal.** If the redeemer can simply reject and trigger the slash, they reject everything and collect `faceValue + penalty` on every job. Deliver-then-refuse becomes free money.
+
+The bond resolves both. Challenging costs `penalty`, refunded if the arbiter agrees and forfeited into the agent's collateral if it does not. Bonds are tracked in `disputeBonds`, separate from `collateral`, because a posted bond is not the agent's money.
+
+### The arbiter is the trust assumption — name it
+
+A single immutable address rules on any disputed job. It cannot mint, cannot touch collateral outside a dispute, and cannot be replaced — but within a dispute its word is final. **This is the most centralised thing in the system** and a CROPS review should flag it.
+
+It is here because subjective quality cannot be settled trustlessly by the two parties alone: any scheme where one side judges is exploitable by that side. Decentralising it means Kleros, UMA, or a committee — out of scope for this build.
+
+### The narrower claim this forces
+
+The README says *"the SI unit of AI agent work"*. The verified path covers **objectively checkable** work; everything else falls to an optimistic path whose backstop is a single trusted address. That is a real limitation and worth stating before someone else does.
+
+The route out is not better arbitration — it is a better verifier. `IVerifier` is an interface, and `SumVerifier` is one trivial implementation:
+
+- **zk proofs.** The agent works offchain and submits a proof; the verifier checks it. Arbitrary computation becomes objectively verifiable with no human anywhere. Noir is the obvious tool.
+- **Property verifiers** — a signature, a Merkle inclusion, a committed-output hash, a deterministic transform.
+- **Optimistic + arbiter** — the fallback when nothing above fits, which is what ships here.
+
+The architecture anticipates this because settlement is delegated to a swappable interface rather than hardcoded. Every job moved from the optimistic path to the verified path is one less thing the arbiter can get wrong.
+
 ## Limits — where this breaks, and the path past it
 
 The mechanism is correct as specified, but it has a stated operating range. Both bounds below are real; neither is fixed in this build.
