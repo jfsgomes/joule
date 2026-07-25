@@ -216,21 +216,25 @@ Solvency requires `collateralPerJoule ≥ faceValue + penalty`, checked exactly 
 
 ## Milestones
 
-Contracts fully done before any frontend work, per priority call.
+Build everything against a **local fork of Sepolia**, then touch the live chain once. This is the Scaffold-ETH three-phase model: phase 1 is a fork with real Uniswap v4 deployed, phase 2 is live contracts with a local UI, phase 3 is the public frontend.
 
-| # | Milestone | Definition of done |
-|---|---|---|
-| 0 | Toolchain | `foundryup` installed; `create-eth` scaffold committed targeting Sepolia; `.gitignore` covers `.env`, `broadcast/`, `cache/`; deployer funded from a Sepolia faucet; all six v4 addresses verified with `cast code` |
-| 1 | Contracts core | All four contracts written; `forge test` green on happy path + timeout slash |
-| 2 | Test depth | Fuzz on all math, all five invariants passing, fork test against real v4 |
-| 3 | Deployed + verified | Live on Sepolia, verified on Etherscan, pokeable via abi.ninja |
-| 4 | Pool live | `JOULE/USDC` v4 pool seeded; swap works from a script |
-| 5 | Agent loop | Demo agent auto-delivers on `Redeemed` events |
-| 6 | Frontend functional | Buy → redeem → settle end to end; Trading API driving the buy |
-| 7 | Frontend beautiful | Design pass, price chart, SE2 branding gone, Vercel deploy |
-| 8 | Slash demo | Timeout path demoable on purpose |
-| 9 | Prize hygiene | `FEEDBACK.md`, README line refs, form submitted |
-| 10 | Stretch | v4 hook / IPFS+ENS, only if 0–9 are done |
+Note the Sepolia deploy is **not** last. A public frontend URL pointing at a laptop's anvil is not a demo, so the deploy has to land between "frontend works locally" and "frontend deployed".
+
+| # | Milestone | Definition of done | Status |
+|---|---|---|---|
+| 0 | Toolchain | `foundryup` installed; scaffold committed; `.gitignore` covers `.env`, `broadcast/`, `cache/`; deployer funded; all six v4 addresses verified with `cast code` | ✅ |
+| 1 | Contracts core | All four contracts written; `forge test` green on happy path, timeout slash, and the optimistic/dispute paths | ✅ |
+| 2 | Test depth | Fuzz on all math, all five invariants passing | ✅ *(fork test deferred to 3 — nothing touches Uniswap yet)* |
+| 3 | Pool live | `JOULE/USDC` v4 pool seeded on a Sepolia fork; swap works from a script; fork test against real v4 | ← next |
+| 4 | Agent loop | Demo agent auto-delivers on `Redeemed` events | |
+| 5 | Frontend functional | Buy → redeem → settle end to end against the fork; Trading API driving the buy | |
+| 6 | Deployed + verified | Live on Sepolia, verified on Etherscan, pokeable via abi.ninja; local UI repointed at it | |
+| 7 | Frontend beautiful | Design pass, price chart, SE2 branding gone, Vercel deploy | |
+| 8 | Slash demo | Timeout path demoable on purpose | |
+| 9 | Prize hygiene | `FEEDBACK.md`, README line refs, form submitted | |
+| 10 | Stretch | v4 hook / IPFS+ENS, only if 0–9 are done | |
+
+**To work on the fork:** set `targetNetworks: [chains.foundry]` in `scaffold.config.ts` and run `FORK_URL=sepolia yarn fork`. The env var is required — `yarn fork sepolia` silently forks mainnet.
 
 ---
 
@@ -239,6 +243,7 @@ Contracts fully done before any frontend work, per priority call.
 1. Agent A stakes 100 USDC, mints 10 Joules, seeds the pool at ~5 USDC. Pool goes live.
 2. Human buys Joules via the Trading API → price ticks up on the chart. "This is price discovery for agent labor."
 3. Agent B redeems a Joule with job `sum(2,2)`. Demo agent delivers, verifier auto-accepts, token burns.
+   - **Gap to close:** `sum(2,2)` only ever takes the *verified* path, so the acceptance window, the dispute bond and the arbiter never appear on stage. That machinery is built and tested but invisible. Add a step — redeem something the verifier cannot confirm, show it enter the window — or at least a slide. It is the answer to "what about work a contract can't check?", which is the obvious question.
 4. Kill the demo agent. Redeem another Joule. Deadline passes → `claimTimeout` → refund + penalty visibly leaves the agent's stake. "This is why the promise is credible."
 5. Close on the pool chart: market price of Agent A's work, discovered, not set.
 
