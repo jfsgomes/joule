@@ -1,0 +1,20 @@
+{
+  "name": "@se-2/agent",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "~16.4.7",
+    "viem": "2.39.0"
+  },
+  "devDependencies": {
+    "@types/node": "~22.13.9",
+    "tsx": "~4.19.3",
+    "typescript": "~5.8.2"
+  }
+}

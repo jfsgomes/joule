@@ -44,6 +44,12 @@ jobs:
       - name: Run foundry tests
         run: yarn foundry:test
 
+      # Nothing else exercises the agent -- it has no test suite and is not part
+      # of the Next.js build -- so without this it can rot silently against an
+      # ABI or viem change and only fail on stage.
+      - name: Type-check the delivery agent
+        run: yarn agent:check-types
+
       # `yarn chain` runs setup-anvil-wallet first, which DELETES and recreates
       # the scaffold-eth-default keystore before starting anvil. The previous
       # `yarn chain & yarn deploy` raced that window -- deploy read the keystore
