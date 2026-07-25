@@ -158,10 +158,8 @@ contract JoulePoolForkTest is Test {
             joule: address(stack.joule),
             usdc: address(stack.usdc),
             spotPrice: JoulePoolParams.SPOT_PRICE,
-            sellLow: JoulePoolParams.SELL_LOW,
             sellHigh: JoulePoolParams.SELL_HIGH,
             bidLow: JoulePoolParams.BID_LOW,
-            bidHigh: JoulePoolParams.BID_HIGH,
             jouleInventory: JoulePoolParams.JOULE_INVENTORY,
             usdcBid: JoulePoolParams.USDC_BID,
             fee: JoulePoolParams.FEE,
@@ -292,9 +290,13 @@ contract JoulePoolForkTest is Test {
         uint256 bought = stack.joule.balanceOf(buyer);
         assertGt(bought, 0, "buyer received Joules");
 
-        // 10 USDC at an ask that opens at 5.00 and rises: strictly under 2.
-        assertLt(bought, 2 ether, "cannot beat the 5.00 ask");
-        assertGt(bought, 1.5 ether, "execution is near the ask, not miles through it");
+        // The wall now opens AT spot, so the ceiling is the spot price itself
+        // rather than a separate ask. The 1% allowance is tick alignment: the
+        // opening tick is snapped down onto the 60-tick grid, which is worth up
+        // to ~0.6% of price and always in the buyer's favour.
+        uint256 ceiling = (10e6 * 1 ether * 101) / (JoulePoolParams.SPOT_PRICE * 100);
+        assertLt(bought, ceiling, "cannot beat the opening ask");
+        assertGt(bought, (ceiling * 85) / 100, "execution is near the ask, not miles through it");
 
         (, int24 tickAfter,,) = stateView.getSlot0(seeded.key.toId());
         if (seeded.jouleIsToken0) {
@@ -372,29 +374,57 @@ contract JoulePoolForkTest is Test {
 
     // --- the shape of the book at open ---
 
+    // --- the property that makes the pool routable ---
+
+    function test_ActiveLiquidityAtSpotIsNonZero_JouleIsToken0() public onFork {
+        _assertLiveAtSpot(true);
+    }
+
+    function test_ActiveLiquidityAtSpotIsNonZero_JouleIsToken1() public onFork {
+        _assertLiveAtSpot(false);
+    }
+
     /**
-     * @dev Documents a property that will matter for the Trading API: the
-     *      opening spot at 4.90 sits in the spread between the bid (top 4.80)
-     *      and the wall (bottom 5.00), so ACTIVE liquidity at spot is zero even
-     *      though the pool holds 10 JOULE and 20 USDC. That is a normal
-     *      two-sided quote and v4 handles it -- a swap gaps to the nearest
-     *      initialized tick and fills there, which the swap tests above prove.
+     * @dev THE REGRESSION TEST FOR THE BUG THAT COST US A SEPOLIA DEPLOY.
      *
-     *      It is asserted rather than left implicit because a router that
-     *      checks `getLiquidity` alone would read this pool as empty and refuse
-     *      to quote it. If the Trading API declines us, this is the first thing
-     *      to look at, and narrowing the spread is the first thing to try.
+     *      An earlier seed opened at 4.90 with the wall at [5.00, 6.00] and the
+     *      bid at [4.00, 4.80]. Every test then in this file passed: the pool
+     *      opened at the right price, the wall cost zero USDC, buying walked the
+     *      price up, selling walked it down. And the Uniswap Trading API refused
+     *      to quote it -- 404 ResourceNotFound -- because `getLiquidity()` at
+     *      the opening tick was zero. v4 itself was perfectly happy, gapping to
+     *      the nearest initialized tick, which is exactly why the fork tests
+     *      caught nothing.
+     *
+     *      Confirmed on Sepolia: minting a position spanning spot, worth about
+     *      five dollars against a pool already holding seventy, flipped the same
+     *      pool from 404 to a working quote. So this asserts the routability
+     *      property directly rather than trusting that inventory implies depth.
+     *
+     *      Both orderings, because which of the two ranges is live at spot flips
+     *      with the ordering -- a position is active on [tickLower, tickUpper),
+     *      so only the one pinned at its LOWER bound counts.
      */
-    function test_ActiveLiquidityAtSpotIsZeroByDesign() public onFork {
-        Stack memory stack = _deployStack(true);
+    function _assertLiveAtSpot(bool wantJouleIsToken0) internal {
+        Stack memory stack = _deployStack(wantJouleIsToken0);
         _stakeAndIssue(stack, 10);
         JoulePoolSeeder.Seeded memory seeded = _seed(stack);
 
-        assertEq(stateView.getLiquidity(seeded.key.toId()), 0, "spot sits in the spread");
+        assertGt(stateView.getLiquidity(seeded.key.toId()), 0, "a router must see liquidity at spot");
         assertGt(seeded.sellLiquidity, 0, "the wall is not empty");
         assertGt(seeded.bidLiquidity, 0, "the bid is not empty");
 
+        // The ranges meet exactly at the opening tick, with no gap either side.
+        if (seeded.jouleIsToken0) {
+            assertEq(seeded.sellLower, seeded.spotTick, "wall starts at spot");
+            assertEq(seeded.bidUpper, seeded.spotTick, "bid ends at spot");
+        } else {
+            assertEq(seeded.sellUpper, seeded.spotTick, "wall ends at spot");
+            assertEq(seeded.bidLower, seeded.spotTick, "bid starts at spot");
+        }
+
         console.log("pool id:");
         console.logBytes32(PoolId.unwrap(seeded.key.toId()));
+        console.log("active liquidity at spot:", stateView.getLiquidity(seeded.key.toId()));
     }
 }

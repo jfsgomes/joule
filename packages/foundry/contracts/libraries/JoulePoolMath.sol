@@ -81,32 +81,60 @@ library JoulePoolMath {
     }
 
     /**
-     * @notice Tick range covering the price band between `priceA` and `priceB`.
+     * @notice The opening tick, snapped DOWN onto the tick-spacing grid.
      *
-     * @dev The two prices are sorted AFTER conversion, not before. That is what
-     *      makes this ordering-agnostic: when JOULE is token1 the price is
-     *      inverted, so the higher USDC price maps to the LOWER tick, and a
-     *      caller who sorted by price first would build the range backwards.
-     *
-     *      Alignment is INWARD -- lower rounds up, upper rounds down -- so a
-     *      band never widens toward spot. Rounding outward could drag a range
-     *      that was placed strictly above spot back across it, silently turning
-     *      a single-sided position into a two-sided one that demands the token
-     *      the caller intended not to spend.
+     * @dev The pool must be initialized at exactly this tick's price, because
+     *      every range boundary is pinned to it. A spot tick off the grid could
+     *      not be used as a position boundary at all, and aligning the ranges
+     *      to the grid independently would leave a gap around spot -- which is
+     *      the whole failure this design exists to avoid. See `rangeFromTick`.
      */
-    function rangeFor(uint256 priceA, uint256 priceB, bool jouleIsToken0, int24 spacing)
+    function alignedSpotTick(uint256 usdcPerJoule, bool jouleIsToken0, int24 spacing) internal pure returns (int24) {
+        if (spacing <= 0) revert InvalidSpacing(spacing);
+        return floorToSpacing(tickFor(usdcPerJoule, jouleIsToken0), spacing);
+    }
+
+    /**
+     * @notice A range running from `pinnedTick` out to the tick holding `price`.
+     *
+     * @dev THIS IS WHAT KEEPS LIQUIDITY ALIVE AT SPOT. Both the sell wall and
+     *      the bid are built with `pinnedTick` set to the opening tick, so they
+     *      share that exact boundary and there is no gap between them. A pool
+     *      whose ranges merely sit near spot, with nothing spanning the current
+     *      tick, reports `getLiquidity() == 0` and the Uniswap Trading API will
+     *      not quote it -- confirmed on Sepolia, where the identical pool went
+     *      from 404 to a working quote the moment liquidity covered spot.
+     *
+     *      Only the FAR side is aligned, and inward, so the band never widens
+     *      past the price it was asked for. The pinned side is already on the
+     *      grid by construction and must not be moved -- rounding it would
+     *      reopen the gap by up to one spacing.
+     *
+     *      Ordering-agnostic: which side of `pinnedTick` the far tick lands on
+     *      is discovered, not assumed. When JOULE is token1 the pool price is
+     *      inverted, so a higher USDC price maps to a LOWER tick and the same
+     *      call produces a range on the opposite side.
+     *
+     *      Note the half-open interval. A position is active on
+     *      `[tickLower, tickUpper)`, so a range pinned at its LOWER bound is
+     *      active at spot while one pinned at its UPPER bound is not. That
+     *      asymmetry is why exactly one of the two ranges is live at any
+     *      opening -- and it flips with the token ordering.
+     */
+    function rangeFromTick(int24 pinnedTick, uint256 price, bool jouleIsToken0, int24 spacing)
         internal
         pure
         returns (int24 tickLower, int24 tickUpper)
     {
         if (spacing <= 0) revert InvalidSpacing(spacing);
 
-        int24 tickA = tickFor(priceA, jouleIsToken0);
-        int24 tickB = tickFor(priceB, jouleIsToken0);
-        (tickLower, tickUpper) = tickA < tickB ? (tickA, tickB) : (tickB, tickA);
+        int24 far = tickFor(price, jouleIsToken0);
 
-        tickLower = ceilToSpacing(tickLower, spacing);
-        tickUpper = floorToSpacing(tickUpper, spacing);
+        if (far > pinnedTick) {
+            (tickLower, tickUpper) = (pinnedTick, floorToSpacing(far, spacing));
+        } else {
+            (tickLower, tickUpper) = (ceilToSpacing(far, spacing), pinnedTick);
+        }
 
         if (tickLower >= tickUpper) revert RangeTooNarrow(tickLower, tickUpper);
     }
@@ -145,18 +173,27 @@ library JoulePoolMath {
     }
 
     /**
-     * @notice Reverts unless [tickLower, tickUpper) sits wholly on the side of
-     *         `currentTick` that makes it hold `wantToken0` and nothing else.
+     * @notice Reverts unless [tickLower, tickUpper) holds `wantToken0` and
+     *         nothing else at `currentTick`.
      *
      * @dev This is the check that catches a mirrored range. A concentrated
-     *      position holds only token0 while spot is below it and only token1
-     *      while spot is at or above it; anywhere in between it holds a mix.
-     *      Placing the JOULE sell wall on the wrong side of spot turns it into a
-     *      BUY wall that fills instantly against the agent -- the exact failure
-     *      MECHANISM.md flags under "Two things that will bite".
+     *      position holds only token0 while spot is at or below its lower
+     *      bound, and only token1 while spot is at or above its upper bound;
+     *      anywhere in between it holds a mix. Placing the JOULE sell wall on
+     *      the wrong side of spot turns it into a BUY wall that fills instantly
+     *      against the agent -- the exact failure MECHANISM.md flags under
+     *      "Two things that will bite".
+     *
+     *      EQUALITY IS ALLOWED ON BOTH SIDES, and that is load-bearing rather
+     *      than a loosened check. At `currentTick == tickLower` the position is
+     *      ACTIVE -- it contributes liquidity at spot, which is what makes the
+     *      pool quotable -- yet its token1 amount is exactly
+     *      `L * (sqrtP - sqrtLower) == 0`. So a range pinned at spot is
+     *      genuinely single-sided and live at the same time. Requiring strict
+     *      inequality would reject precisely the configuration we need.
      */
     function assertSingleSided(int24 tickLower, int24 tickUpper, int24 currentTick, bool wantToken0) internal pure {
-        bool ok = wantToken0 ? currentTick < tickLower : currentTick >= tickUpper;
+        bool ok = wantToken0 ? currentTick <= tickLower : currentTick >= tickUpper;
         if (!ok) revert NotSingleSided(tickLower, tickUpper, currentTick, wantToken0);
     }
 }

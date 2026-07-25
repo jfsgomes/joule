@@ -42,14 +42,13 @@ library SepoliaV4 {
  *
  *      The hybrid seed, decided 2026-07-25:
  *
- *        SELL WALL  10 JOULE across [5.00, 6.00], funded with ZERO USDC.
- *                   A range order -- a limit sell expressed as liquidity. Spot
- *                   opens below it at 4.90, so the position is 100% JOULE the
- *                   moment it is minted and converts to USDC as buyers push
- *                   through it. Average execution is the geometric mean,
- *                   sqrt(5 * 6) ~= 5.48, not the arithmetic 5.50.
+ *        SELL WALL  10 JOULE from spot up to 6.00, funded with ZERO USDC.
+ *                   A range order -- a limit sell expressed as liquidity. It is
+ *                   100% JOULE the moment it is minted and converts to USDC as
+ *                   buyers push through it. Average execution is the geometric
+ *                   mean, sqrt(4.90 * 6.00) ~= 5.42.
  *
- *        BID        20 USDC across [4.00, 4.80], funded with ZERO JOULE.
+ *        BID        20 USDC from spot down to 4.00, funded with ZERO JOULE.
  *                   Not required to sell Joules, and MECHANISM.md's pure
  *                   single-sided design omits it. It is here because without
  *                   liquidity below spot nobody can sell a Joule BACK: the
@@ -58,10 +57,18 @@ library SepoliaV4 {
  *                   in. 20 USDC buys a two-directional demo for a third of what
  *                   a symmetric two-sided seed would cost.
  *
- *      The 4.80-4.90 gap is deliberate. Inward tick alignment shrinks a band
- *      toward its own interior, so a bid whose upper bound sat exactly at spot
- *      could still round across it; a spread leaves no doubt which side of spot
- *      each range is on, and it is what a real market maker would quote anyway.
+ *      THE TWO RANGES TOUCH AT SPOT. There is no gap and no bid/ask spread,
+ *      which is deliberate and was learned the hard way. An earlier version
+ *      opened at 4.90 with the wall at [5.00, 6.00] and the bid at
+ *      [4.00, 4.80]; that pool held 10 JOULE and 20 USDC, swapped correctly
+ *      under v4, and was INVISIBLE to the Uniswap Trading API, which returned
+ *      404 ResourceNotFound because `getLiquidity()` at the opening tick was
+ *      zero. Confirmed on Sepolia: adding a position spanning spot -- worth
+ *      about five dollars, changing aggregate depth barely at all -- flipped it
+ *      to a working quote. Thin is fine; a hole at spot is not.
+ *
+ *      Losing the spread costs a round-tripper only the 0.6% in fees, which is
+ *      a small price for being routable.
  */
 library JoulePoolParams {
     /// @dev 0.30%, the familiar tier. NOT chosen for routability: the Trading
@@ -75,13 +82,17 @@ library JoulePoolParams {
     ///      step it is fine enough that alignment barely moves our bounds.
     int24 internal constant TICK_SPACING = 60;
 
+    /// @dev The opening price, and the shared boundary of both ranges. Snapped
+    ///      onto the tick-spacing grid at seed time -- see
+    ///      JoulePoolMath.alignedSpotTick -- so the realised opening price is
+    ///      within one 60-tick step (~0.6%) of this.
     uint256 internal constant SPOT_PRICE = 4_900_000; // 4.90 USDC per Joule
 
-    uint256 internal constant SELL_LOW = 5_000_000; // 5.00
+    /// @dev Far edge of the sell wall. The near edge is spot.
     uint256 internal constant SELL_HIGH = 6_000_000; // 6.00
 
+    /// @dev Far edge of the bid. The near edge is spot.
     uint256 internal constant BID_LOW = 4_000_000; // 4.00
-    uint256 internal constant BID_HIGH = 4_800_000; // 4.80
 
     /// @dev Matches the 10 Joules the agent issues against 100 USDC of
     ///      collateral at collateralPerJoule = 10 USDC. Issuing more and

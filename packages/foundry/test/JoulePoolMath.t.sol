@@ -32,12 +32,12 @@ contract JoulePoolMathHarness {
         return JoulePoolMath.sqrtPriceX96For(usdcPerJoule, jouleIsToken0);
     }
 
-    function rangeFor(uint256 priceA, uint256 priceB, bool jouleIsToken0, int24 spacing)
+    function rangeFromTick(int24 pinnedTick, uint256 price, bool jouleIsToken0, int24 spacing)
         external
         pure
         returns (int24, int24)
     {
-        return JoulePoolMath.rangeFor(priceA, priceB, jouleIsToken0, spacing);
+        return JoulePoolMath.rangeFromTick(pinnedTick, price, jouleIsToken0, spacing);
     }
 
     function assertSingleSided(int24 tickLower, int24 tickUpper, int24 currentTick, bool wantToken0) external pure {
@@ -56,10 +56,8 @@ contract JoulePoolMathTest is Test {
 
     uint256 constant USDC = 1e6;
     uint256 constant SPOT = 4_900_000; // 4.90 USDC per Joule
-    uint256 constant SELL_LO = 5_000_000; // 5.00
-    uint256 constant SELL_HI = 6_000_000; // 6.00
-    uint256 constant BID_LO = 4_000_000; // 4.00
-    uint256 constant BID_HI = 4_800_000; // 4.80
+    uint256 constant SELL_HI = 6_000_000; // 6.00, far edge of the wall
+    uint256 constant BID_LO = 4_000_000; // 4.00, far edge of the bid
 
     uint256 constant Q96 = 1 << 96;
 
@@ -127,9 +125,9 @@ contract JoulePoolMathTest is Test {
     }
 
     function test_HigherUsdcPriceRaisesTickOnlyWhenJouleIsToken0() public pure {
-        assertGt(JoulePoolMath.tickFor(SELL_HI, true), JoulePoolMath.tickFor(SELL_LO, true), "token0: price up, tick up");
+        assertGt(JoulePoolMath.tickFor(SELL_HI, true), JoulePoolMath.tickFor(SPOT, true), "token0: price up, tick up");
         assertLt(
-            JoulePoolMath.tickFor(SELL_HI, false), JoulePoolMath.tickFor(SELL_LO, false), "token1: price up, tick DOWN"
+            JoulePoolMath.tickFor(SELL_HI, false), JoulePoolMath.tickFor(SPOT, false), "token1: price up, tick DOWN"
         );
     }
 
@@ -170,34 +168,41 @@ contract JoulePoolMathTest is Test {
 
     // --- ranges ---
 
-    /// @dev Alignment shrinks a band; it must never widen one, or a range placed
-    ///      clear of spot could be dragged back across it.
-    function test_RangeAlignmentShrinksTowardTheBand() public pure {
-        (int24 lower, int24 upper) = JoulePoolMath.rangeFor(SELL_LO, SELL_HI, true, SPACING);
+    /// @dev The pinned side must survive untouched. Rounding it would reopen the
+    ///      gap at spot by up to one spacing, which is the whole bug.
+    function test_PinnedSideIsNeverMoved() public pure {
+        for (uint256 i = 0; i < 2; i++) {
+            bool jouleIsToken0 = i == 0;
+            int24 spot = JoulePoolMath.alignedSpotTick(SPOT, jouleIsToken0, SPACING);
 
-        assertGe(lower, JoulePoolMath.tickFor(SELL_LO, true), "lower rounded inward");
-        assertLe(upper, JoulePoolMath.tickFor(SELL_HI, true), "upper rounded inward");
-        assertLt(lower, upper, "range is non-empty");
+            (int24 sellLower, int24 sellUpper) = JoulePoolMath.rangeFromTick(spot, SELL_HI, jouleIsToken0, SPACING);
+            assertTrue(sellLower == spot || sellUpper == spot, "wall is pinned to spot");
+
+            (int24 bidLower, int24 bidUpper) = JoulePoolMath.rangeFromTick(spot, BID_LO, jouleIsToken0, SPACING);
+            assertTrue(bidLower == spot || bidUpper == spot, "bid is pinned to spot");
+        }
     }
 
-    /// @dev The prices are sorted after conversion, not before. Passing them in
-    ///      the other order must produce the identical range.
-    function test_RangeIsIndifferentToArgumentOrder() public pure {
-        (int24 lowerA, int24 upperA) = JoulePoolMath.rangeFor(SELL_LO, SELL_HI, false, SPACING);
-        (int24 lowerB, int24 upperB) = JoulePoolMath.rangeFor(SELL_HI, SELL_LO, false, SPACING);
+    /// @dev The far side rounds inward, so a band never reaches past the price
+    ///      it was asked for.
+    function test_FarSideRoundsInward() public pure {
+        int24 spot = JoulePoolMath.alignedSpotTick(SPOT, true, SPACING);
+        (, int24 upper) = JoulePoolMath.rangeFromTick(spot, SELL_HI, true, SPACING);
 
-        assertEq(lowerA, lowerB, "lower matches");
-        assertEq(upperA, upperB, "upper matches");
+        assertLe(upper, JoulePoolMath.tickFor(SELL_HI, true), "far edge rounded inward");
+        assertGt(upper, spot, "range is non-empty");
+    }
+
+    function test_AlignedSpotTickIsOnTheGrid() public pure {
+        assertEq(JoulePoolMath.alignedSpotTick(SPOT, true, SPACING) % SPACING, int24(0), "token0 case");
+        assertEq(JoulePoolMath.alignedSpotTick(SPOT, false, SPACING) % SPACING, int24(0), "token1 case");
     }
 
     function test_RevertsWhenBandCollapsesBelowOneSpacing() public {
-        // Two prices a hair apart cannot survive inward alignment at spacing 60.
-        vm.expectRevert(
-            // Inward alignment crosses the bounds over each other: 5.00 USDC is
-            // tick ~-260229, and the band is far narrower than one 60-tick step.
-            abi.encodeWithSelector(JoulePoolMath.RangeTooNarrow.selector, int24(-260220), int24(-260280))
-        );
-        harness.rangeFor(5_000_000, 5_000_100, true, SPACING);
+        // A far price inside the same spacing step as the pin leaves nothing.
+        int24 spot = JoulePoolMath.alignedSpotTick(SPOT, true, SPACING);
+        vm.expectRevert(abi.encodeWithSelector(JoulePoolMath.RangeTooNarrow.selector, spot, spot));
+        harness.rangeFromTick(spot, SPOT, true, SPACING);
     }
 
     // --- the seeding geometry, both orderings ---
@@ -211,40 +216,46 @@ contract JoulePoolMathTest is Test {
     }
 
     /**
-     * @dev The whole hybrid seed, checked as geometry: a JOULE-only sell wall
-     *      clear of spot on one side, a USDC-only bid clear of it on the other.
-     *      Which tick direction each lands in flips with the ordering, which is
-     *      exactly why this runs twice.
+     * @dev The whole hybrid seed, checked as geometry: a JOULE-only sell wall on
+     *      one side of spot, a USDC-only bid on the other, the two meeting
+     *      exactly AT spot with no gap. Which tick direction each lands in flips
+     *      with the ordering, which is exactly why this runs twice.
      */
     function _assertSeedGeometry(bool jouleIsToken0) internal pure {
-        int24 spotTick = JoulePoolMath.tickFor(SPOT, jouleIsToken0);
+        int24 spotTick = JoulePoolMath.alignedSpotTick(SPOT, jouleIsToken0, SPACING);
 
-        (int24 sellLower, int24 sellUpper) = JoulePoolMath.rangeFor(SELL_LO, SELL_HI, jouleIsToken0, SPACING);
-        (int24 bidLower, int24 bidUpper) = JoulePoolMath.rangeFor(BID_LO, BID_HI, jouleIsToken0, SPACING);
+        (int24 sellLower, int24 sellUpper) = JoulePoolMath.rangeFromTick(spotTick, SELL_HI, jouleIsToken0, SPACING);
+        (int24 bidLower, int24 bidUpper) = JoulePoolMath.rangeFromTick(spotTick, BID_LO, jouleIsToken0, SPACING);
 
-        // The sell wall is funded in JOULE, the bid in USDC.
+        // The sell wall is funded in JOULE, the bid in USDC. Still exactly true
+        // at the shared boundary: the other side's amount there is zero.
         JoulePoolMath.assertSingleSided(sellLower, sellUpper, spotTick, jouleIsToken0);
         JoulePoolMath.assertSingleSided(bidLower, bidUpper, spotTick, !jouleIsToken0);
 
         // Sell wall sits at higher ticks only when JOULE is token0.
         if (jouleIsToken0) {
-            assertGt(sellLower, spotTick, "sell wall above spot");
-            assertLt(bidUpper, spotTick + 1, "bid below spot");
+            assertEq(sellLower, spotTick, "wall starts at spot");
+            assertEq(bidUpper, spotTick, "bid ends at spot");
         } else {
-            assertLt(sellUpper, spotTick + 1, "sell wall below spot");
-            assertGt(bidLower, spotTick, "bid above spot");
+            assertEq(sellUpper, spotTick, "wall ends at spot");
+            assertEq(bidLower, spotTick, "bid starts at spot");
         }
 
-        // The two ranges must not overlap, or the seed is one position, not two.
+        // Half-open intervals, so meeting at spot is not overlapping.
         assertTrue(sellUpper <= bidLower || bidUpper <= sellLower, "ranges disjoint");
+
+        // Exactly one range must be live at spot, or a router sees an empty pool.
+        bool sellLive = sellLower <= spotTick && spotTick < sellUpper;
+        bool bidLive = bidLower <= spotTick && spotTick < bidUpper;
+        assertTrue(sellLive != bidLive, "exactly one range is live at spot");
     }
 
     /// @dev The mirrored-range failure MECHANISM.md warns about: fund the sell
     ///      wall as though the ordering were the other way and the check must bite.
     function test_MirroredSellWallIsRejected() public {
         bool jouleIsToken0 = true;
-        int24 spotTick = JoulePoolMath.tickFor(SPOT, jouleIsToken0);
-        (int24 lower, int24 upper) = JoulePoolMath.rangeFor(SELL_LO, SELL_HI, jouleIsToken0, SPACING);
+        int24 spotTick = JoulePoolMath.alignedSpotTick(SPOT, jouleIsToken0, SPACING);
+        (int24 lower, int24 upper) = JoulePoolMath.rangeFromTick(spotTick, SELL_HI, jouleIsToken0, SPACING);
 
         // Claiming this range holds token1 (USDC) is false -- it is above spot.
         vm.expectRevert(
@@ -262,13 +273,13 @@ contract JoulePoolMathTest is Test {
     function test_SingleSidedLiquidityIsNonZeroOnBothOrderings() public pure {
         for (uint256 i = 0; i < 2; i++) {
             bool jouleIsToken0 = i == 0;
+            int24 spotTick = JoulePoolMath.alignedSpotTick(SPOT, jouleIsToken0, SPACING);
 
-            (int24 sellLower, int24 sellUpper) = JoulePoolMath.rangeFor(SELL_LO, SELL_HI, jouleIsToken0, SPACING);
-            uint128 sellLiquidity =
-                JoulePoolMath.singleSidedLiquidity(sellLower, sellUpper, 10 ether, jouleIsToken0);
+            (int24 sellLower, int24 sellUpper) = JoulePoolMath.rangeFromTick(spotTick, SELL_HI, jouleIsToken0, SPACING);
+            uint128 sellLiquidity = JoulePoolMath.singleSidedLiquidity(sellLower, sellUpper, 10 ether, jouleIsToken0);
             assertGt(sellLiquidity, 0, "sell wall liquidity");
 
-            (int24 bidLower, int24 bidUpper) = JoulePoolMath.rangeFor(BID_LO, BID_HI, jouleIsToken0, SPACING);
+            (int24 bidLower, int24 bidUpper) = JoulePoolMath.rangeFromTick(spotTick, BID_LO, jouleIsToken0, SPACING);
             uint128 bidLiquidity = JoulePoolMath.singleSidedLiquidity(bidLower, bidUpper, 20 * USDC, !jouleIsToken0);
             assertGt(bidLiquidity, 0, "bid liquidity");
         }

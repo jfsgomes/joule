@@ -74,10 +74,8 @@ contract SeedPool is Script {
             joule: address(joule),
             usdc: address(usdc),
             spotPrice: JoulePoolParams.SPOT_PRICE,
-            sellLow: JoulePoolParams.SELL_LOW,
             sellHigh: JoulePoolParams.SELL_HIGH,
             bidLow: JoulePoolParams.BID_LOW,
-            bidHigh: JoulePoolParams.BID_HIGH,
             jouleInventory: JoulePoolParams.JOULE_INVENTORY,
             usdcBid: JoulePoolParams.USDC_BID,
             fee: JoulePoolParams.FEE,
@@ -171,7 +169,10 @@ contract SeedPool is Script {
         );
         console.log(string.concat("bid liquidity       ", vm.toString(uint256(seeded.bidLiquidity))));
         console.log("");
-        console.log("Active liquidity at spot is 0 by design -- 4.90 sits in the");
-        console.log("4.80/5.00 spread. Swaps gap to the nearest range and fill there.");
+        console.log(
+            string.concat("active liquidity at spot ", vm.toString(uint256(stateView.getLiquidity(seeded.key.toId()))))
+        );
+        console.log("Must be non-zero: the ranges meet at spot so a router can see");
+        console.log("depth there. A gap here reads as an empty pool and will not quote.");
     }
 }

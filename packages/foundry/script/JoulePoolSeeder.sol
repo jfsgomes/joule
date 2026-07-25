@@ -47,14 +47,14 @@ library JoulePoolSeeder {
     }
 
     /// @notice What to build. Prices are USDC base units per whole Joule.
+    /// @dev There is no `sellLow` or `bidHigh`: both ranges start at spot, which
+    ///      is what keeps liquidity alive at the opening tick.
     struct Recipe {
         address joule;
         address usdc;
         uint256 spotPrice;
-        uint256 sellLow;
         uint256 sellHigh;
         uint256 bidLow;
-        uint256 bidHigh;
         uint256 jouleInventory;
         uint256 usdcBid;
         uint24 fee;
@@ -78,6 +78,7 @@ library JoulePoolSeeder {
     error PoolAlreadyPriced(uint160 existingSqrtPriceX96, uint160 intendedSqrtPriceX96);
     error EmptyPosition(string which);
     error RangesOverlap(int24 sellLower, int24 sellUpper, int24 bidLower, int24 bidUpper);
+    error NoLiquidityAtSpot(int24 spotTick);
 
     /**
      * @notice The PoolKey for a JOULE/USDC pool, without planning a seed.
@@ -120,13 +121,17 @@ library JoulePoolSeeder {
         // what makes adding one later purely additive.
         seeded.key = poolKeyFor(recipe.joule, recipe.usdc, recipe.fee, recipe.tickSpacing);
 
-        seeded.sqrtPriceX96 = JoulePoolMath.sqrtPriceX96For(recipe.spotPrice, seeded.jouleIsToken0);
-        seeded.spotTick = TickMath.getTickAtSqrtPrice(seeded.sqrtPriceX96);
+        // The opening tick comes first and everything else hangs off it. It is
+        // snapped to the spacing grid so it can serve as a position boundary,
+        // and the pool is initialized at exactly its price rather than at the
+        // requested price -- otherwise the ranges would not start where spot is.
+        seeded.spotTick = JoulePoolMath.alignedSpotTick(recipe.spotPrice, seeded.jouleIsToken0, recipe.tickSpacing);
+        seeded.sqrtPriceX96 = TickMath.getSqrtPriceAtTick(seeded.spotTick);
 
         (seeded.sellLower, seeded.sellUpper) =
-            JoulePoolMath.rangeFor(recipe.sellLow, recipe.sellHigh, seeded.jouleIsToken0, recipe.tickSpacing);
+            JoulePoolMath.rangeFromTick(seeded.spotTick, recipe.sellHigh, seeded.jouleIsToken0, recipe.tickSpacing);
         (seeded.bidLower, seeded.bidUpper) =
-            JoulePoolMath.rangeFor(recipe.bidLow, recipe.bidHigh, seeded.jouleIsToken0, recipe.tickSpacing);
+            JoulePoolMath.rangeFromTick(seeded.spotTick, recipe.bidLow, seeded.jouleIsToken0, recipe.tickSpacing);
 
         // The sell wall must hold only JOULE and the bid only USDC. Get this
         // backwards and the "sell wall" is a buy wall that fills instantly
@@ -134,9 +139,20 @@ library JoulePoolSeeder {
         JoulePoolMath.assertSingleSided(seeded.sellLower, seeded.sellUpper, seeded.spotTick, seeded.jouleIsToken0);
         JoulePoolMath.assertSingleSided(seeded.bidLower, seeded.bidUpper, seeded.spotTick, !seeded.jouleIsToken0);
 
+        // Half-open intervals, so touching at spot is not overlapping.
         if (!(seeded.sellUpper <= seeded.bidLower || seeded.bidUpper <= seeded.sellLower)) {
             revert RangesOverlap(seeded.sellLower, seeded.sellUpper, seeded.bidLower, seeded.bidUpper);
         }
+
+        // THE CHECK THAT WOULD HAVE CAUGHT THE ORIGINAL BUG. A position is live
+        // on [tickLower, tickUpper), so of two ranges meeting at spot exactly
+        // the one pinned at its LOWER bound is active -- and which of them that
+        // is flips with the token ordering. If neither is, the pool reports
+        // zero liquidity and the Trading API will not quote it, however much
+        // inventory is sitting a few ticks away.
+        bool sellLive = seeded.sellLower <= seeded.spotTick && seeded.spotTick < seeded.sellUpper;
+        bool bidLive = seeded.bidLower <= seeded.spotTick && seeded.spotTick < seeded.bidUpper;
+        if (!sellLive && !bidLive) revert NoLiquidityAtSpot(seeded.spotTick);
 
         seeded.sellLiquidity = JoulePoolMath.singleSidedLiquidity(
             seeded.sellLower, seeded.sellUpper, recipe.jouleInventory, seeded.jouleIsToken0
