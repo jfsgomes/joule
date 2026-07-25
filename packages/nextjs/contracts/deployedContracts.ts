@@ -1914,7 +1914,7 @@ const deployedContracts = {
   },
   11155111: {
     MockUSDC: {
-      address: "0x88053d822ad4d85c01dedd08afe8798dcf84cd9b",
+      address: "0xcd7bd62e6c0439853393df29a8619b04e2943007",
       abi: [
         {
           type: "constructor",
@@ -2249,10 +2249,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 11350262,
+      deployedOnBlock: 11350589,
     },
     SumVerifier: {
-      address: "0x3b28a87497a4dfcf9a156fcb8276dde354f7236c",
+      address: "0x7664b864e2209935b599e40de3c336428668119d",
       abi: [
         {
           type: "function",
@@ -2342,10 +2342,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 11350262,
+      deployedOnBlock: 11350589,
     },
     WorkEscrow: {
-      address: "0x3a08a46ac3987731616812e39b42e9fada00c746",
+      address: "0xacaf997478f466737d82c66fecaab95e27987d53",
       abi: [
         {
           type: "constructor",
@@ -3429,10 +3429,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 11350262,
+      deployedOnBlock: 11350589,
     },
     JouleToken: {
-      address: "0x9A9d2fd0C83219323D66F60C2F0f4DdfB05ADc1B",
+      address: "0x57d89f6Ca5f684312190b7C1EF2d24dF33879399",
       abi: [
         {
           type: "constructor",
