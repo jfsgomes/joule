@@ -139,11 +139,21 @@ With `penalty = faceValue` that is `≥ 2`. Raise the penalty to `2 × faceValue
 - **`coverageRatio` — solvency.** Can the escrow pay every possible default? Testable: `collateral ≥ coverageRatio × faceValue × outstanding`, always.
 - **`penalty` — incentive.** Does the agent prefer delivering? Defaulting is unprofitable while `salePrice < faceValue + penalty`.
 
-## Why the market price sits above `faceValue + penalty`
+## What the token is actually worth — there is no enforced price floor
 
-If a Joule traded below 10 USDC, anyone could buy it, redeem it, let it lapse and collect 10. That arbitrage puts a **hard floor under the token, funded by collateral**. Above the floor, price is the market's read on how likely the agent is to deliver and how much that work is worth.
+An earlier version of this document claimed a collateral-funded price floor: that anyone could buy a cheap Joule, redeem it, let it lapse and collect `faceValue + penalty`. **That is false, and it is worth understanding why, because it is the first thing a sharp reviewer will test.**
 
-That is the thesis in one line: **the floor is enforced, the premium is discovered.**
+The redeemer cannot let it lapse. `submitWork` is `onlyAgent` and stays open for the whole delivery window, so **the agent chooses** between delivering and paying. A rational agent delivers whenever delivery costs less than `faceValue + penalty` — and with `SumVerifier` that is one transaction of gas. So an arbitrageur who buys at 4 USDC and redeems receives the sum of two numbers, not 10 USDC. No arbitrage, no bid, no floor.
+
+What the contract actually guarantees is a **redeemer's option that the agent gets to answer**:
+
+> the redeemer receives, at the agent's choice, **either the work or `faceValue + penalty`**
+
+So the value of an unredeemed Joule is `min(what the work is worth to that particular holder, faceValue + penalty)` — and for a holder who does not want the work, that is approximately zero. A Joule is only worth what it is worth *to you*.
+
+`penalty` is therefore not a price support. It is a **cap on the agent's cost of non-delivery**, which bounds how bad the work is allowed to be before walking away becomes cheaper than doing it. That is a real and useful guarantee — it is simply a different one.
+
+The honest one-liner: **the downside is bounded, the upside is discovered.**
 
 ## Seeding the pool — why it needs only one token
 
@@ -191,10 +201,60 @@ A third less capital, at a better average price, for the same sale.
 A v4 hook runs contract logic on every swap. Rather than the agent pre-committing inventory into a static range, the hook can:
 
 - **Mint on demand** as price crosses the ask — issuing just-in-time against live coverage headroom instead of pre-minting ten and hoping
-- **Bid below the floor** — buying back Joules trading under `faceValue + penalty`, which is exactly the arbitrage boundary described above
+- **Bid for its own inventory** — buying back Joules the agent is willing to retire, which frees `coverageRatio × faceValue` of collateral per Joule. Note this creates a bid the protocol does not otherwise have: as established above, nothing in the contracts puts a floor under the price, so any support is the agent choosing to provide it.
 - **Route swap fees into collateral**, so trading activity raises coverage and therefore issuance capacity
 
 The static single-sided range is that behaviour frozen at a single moment. The hook makes it responsive to the escrow's actual state.
+
+## Limits — where this breaks, and the path past it
+
+The mechanism is correct as specified, but it has a stated operating range. Both bounds below are real; neither is fixed in this build.
+
+### Limit 1 — the agent walks away when the work is expensive
+
+Solvency always holds: the collateral pays out exactly as designed. What can fail is the agent *wanting* to deliver.
+
+The decision rule is one line, and the market price is not in it:
+
+> the agent defaults iff **`cost_of_delivery > faceValue + penalty`**
+
+Sale proceeds are banked either way — the Joules were sold before any of this, and that money is already the agent's. So the price is *sunk* at decision time. What remains is a straight comparison between doing the work and paying the penalty.
+
+An earlier version of this section scored "+200 USDC for delivering nothing" against a baseline of inaction, which is the wrong comparison. Against the right baseline:
+
+| At a pool price of 30, the agent has already banked +300 either way | |
+|---|---|
+| **Deliver** — cost of a `SumVerifier` job ≈ gas, collateral returns | **≈ 0** |
+| **Default** — pays 10 × (5 + 5) from collateral | **−100** |
+| **Defaulting is worse by 100.** | |
+
+So a high price does *not* tempt the agent to default. That is a strictly better property than previously claimed. The real exposure is the opposite one: **work that costs more than `faceValue + penalty` to perform.** Set the penalty too low relative to the job's real cost and the agent rationally pays it instead of working — for every job, forever.
+
+### Buyer protection is a separate claim — don't weld them together
+
+There *is* a bound involving market price, but it protects the **buyer**, not the agent's incentive:
+
+> a holder who paid `P` recovers at most `faceValue + penalty` if the agent defaults
+
+At `P = 30` and `faceValue + penalty = 10`, twenty of that is unsecured. This is normal for a bond trading above its recovery value — but it must be disclosed rather than dressed up as a floor. The two claims share the same symbols and nothing else; deriving one from the other, as an earlier version did, does not hold.
+
+### Limit 2 — capital is locked from mint to burn, not just during delivery
+
+The delivery window is ~2 minutes, which makes the collateral lock sound short. It isn't. A Joule sitting unredeemed in someone's wallet keeps counting toward `outstanding` indefinitely, and the holder alone decides when to redeem. The agent cannot reclaim that capital by waiting.
+
+This is the more practical of the two limits: it caps concurrent exposure, not lifetime volume, and the binding quantity is *Joules in circulation × time*.
+
+### Roadmap
+
+| Mitigation | Attacks | Cost |
+|---|---|---|
+| **Buy back and retire** — agent buys a Joule on the pool and retires it, freeing coverage | Limit 2 | **Already works, no new code.** The agent buys on the pool, calls `redeem` (permissionless — nothing stops the agent being the redeemer), then `submitWork` on their own job, which passes `onlyAgent` because they *are* the agent. Two transactions: `outstanding--`, the Joule burns, `coverageRatio × faceValue` is freed. An emergent property of permissionless redemption, not a roadmap item. |
+| **Expiry** — unredeemed Joules can be voided after N blocks, releasing collateral | Limit 2 | Medium; needs refund semantics and weakens the holder's position. |
+| **Raise `penalty` above the true cost of the work** | Limit 1 | The direct fix, and the only one that addresses the actual failure mode. Solvency then forces `coverageRatio` up in step, so it is paid for in locked capital. |
+| **Repeat play + costly identity** | Limit 1 | An agent who defaults ends with less collateral and therefore less issuance capacity — repeated defaults destroy the franchise. That only fails if becoming a *new* agent is cheap, which is a Sybil problem, not a collateral problem. **ERC-8004** onchain agent identity is where identity is made expensive. |
+| **Mutable `faceValue` / `penalty`** — agent may raise them, topping up collateral to match | Limit 1 | Small, and more useful now: it lets the agent re-price the walk-away option as they learn what jobs actually cost. |
+
+None of these are in this build. The honest position is that the operating range is known and documented, rather than discovered under questioning.
 
 ## Why revenue cannot be "held"
 
@@ -203,3 +263,59 @@ Look again at step 4. The holder's USDC goes into the **Uniswap pool**, and the 
 An escrow cannot hold what it never receives. "Hold revenue until delivery" could only ever govern a *primary* sale — the escrow selling Joules directly — and once a pool exists, that path is redundant with it. Building both would mean explaining why the guarantee applies to one sales channel and not the other.
 
 So: **sale proceeds are the agent's on receipt, and the collateral is the sole guarantee.** One rule, identical for every channel. What protects the buyer is not custody of the purchase price — it is the stake, sized by `coverageRatio` and made painful by `penalty`.
+
+---
+
+## Prior art
+
+Two projects have already tokenised an agent or a person. Both are instructive, and neither enforces delivery onchain — which is the entire gap Joule is built into.
+
+### Virtuals Protocol — Initial Agent Offering
+
+[The IAO](https://whitepaper.virtuals.io/about-virtuals-1/the-protocol/virtual-agents-as-programmable-decentralized-entities/initial-agent-offering-mechanism) launches an agent with a fixed 1B-token supply. A creator pays 100 $VIRTUAL to open a bonding curve; at ~41.6k $VIRTUAL accumulated the agent "graduates" into a $VIRTUAL-paired liquidity pool locked for ten years. Post-graduation a 1% trading tax splits 30% creator / 20% affiliates / 50% Agent SubDAO.
+
+The whitepaper page describes no backing, no redemption, and no default or slashing logic. That is not an omission — those concepts don't exist in the IAO. **Value accrues from trading volume, not delivery.** An agent that produces nothing but sustains churn still pays its creator.
+
+Two places the designs directly conflict:
+
+- **Virtuals taxes speculation; Joule refuses to touch the sale.** The 1% tax makes the token earn from its own churn. Joule takes the opposite position — sale proceeds are the agent's on receipt, the escrow never sees them, and the stake is the only guarantee. One rule per channel instead of a fee carve-out.
+- **Fixed 1B vs. supply-as-a-consequence.** Virtuals' supply is a launch decision. Joule's is a solvency output: the eleventh Joule cannot be minted if collateral doesn't cover it. Boring cap table by construction, structurally bounded market cap.
+
+Virtuals also uses the bonding curve as price discovery and an anti-rug device. Joule has no launch curve — it opens with a single-sided v4 range order, because **the collateral already does the job the curve approximates**.
+
+### Orb — Harberger-taxed right to invoke a person
+
+[Orb](https://orb.land/) ([contracts](https://github.com/orbland/contracts)) is the closer analogue, and the more useful failure. A single NFT grants its keeper the recurring right to invoke its creator — ask a question, receive an answer — with a `cooldown` (default `7 days`) between invocations. Ownership is Harberger-taxed: the keeper self-assesses a price, anyone may buy at that price, and tax streams to the creator every block. [Eric Wall's Orb](https://www.theblock.co/post/236422/eric-walls-unique-consulting-nft-is-relinquished-amidst-300-tax-burden) charged 25% monthly — ~300% annualised.
+
+**The obligation is a promise, not a mechanism.** The contract has `honoredUntil` and `responsePeriod`, but `responsePeriod` is metadata: no collateral, no penalty, no foreclosure, no tax suspension if the creator simply never answers. Enforcement is entirely reputational. Eric's Orb was released April 2023; its sole holder [relinquished it under the tax burden](https://www.theblock.co/post/236422/eric-walls-unique-consulting-nft-is-relinquished-amidst-300-tax-burden), and [Orb Land shut down](https://protos.com/orb-land-shutdown-proves-almost-no-one-cares-about-nft-utility/).
+
+The mechanical inversion is worth stating plainly:
+
+> **Orb's holder pays to hold. Joule's holder is paid to hold.**
+
+An Orb keeper bleeds ~300%/yr for the privilege of holding a claim. A Joule's carrying cost falls on the *agent* instead, whose collateral stays locked from mint until the holder chooses to redeem. Joule's Limit 2 is exactly Orb's carrying cost, moved to the side of the table that has something to lose by it — and can end it by delivering.
+
+Two more differences that matter:
+
+- **Perpetual and non-fungible vs. consumable and fungible.** An Orb is one claim, one holder, resold forever. A Joule is one claim, one job, burned on settlement. Fungibility plus burn-on-settle is what lets supply track collateral instead of being fixed.
+- **Harberger solves a problem Joule punts on.** The tax is a real answer to pricing a right whose value is idiosyncratic to whoever holds it. Joule hands that to an AMM, which works because a Joule's value is roughly the same to everyone — a fair trade only because the jobs are objectively specified.
+
+### Where the three land
+
+| | Virtuals IAO | Orb | Joule |
+|---|---|---|---|
+| The asset | Fungible share of an agent's fee stream | Non-fungible perpetual right to invoke | Fungible one-shot claim on one job |
+| Backed by | Nothing | Nothing | USDC, over-collateralised |
+| Delivery obligation | None | Social — `responsePeriod` is metadata | Onchain — verifier, then slash |
+| Cost of non-delivery | None | Reputation | `faceValue + penalty` per Joule |
+| Who carries the cost of holding | Holder (drawdown) | Holder (~300%/yr Harberger tax) | **Agent** (locked collateral) |
+| Downside protection | None | None | `faceValue + penalty`, if the agent defaults |
+| Issuer earns from | 30% of a 1% trading tax | Harberger tax stream | Sale proceeds, via the pool |
+
+### What Joule is actually betting
+
+Neither prior project failed for want of demand for agent tokens. They differ from Joule on one axis: whether the claim is **enforceable without trusting the issuer**. Virtuals imports that trust socially — $VIRTUAL pairing, creator reputation, repeat play — and enforces none of it onchain. Orb wrote the obligation into a variable and left it unenforced.
+
+Joule enforces, and pays for it in capital efficiency. For a buyer to be made whole when an agent defaults, `faceValue + penalty` has to be worth at least what they paid — so collateral per outstanding Joule has to exceed market price per Joule. That ceiling is exactly what the other two escape by backing nothing: a claim with no redemption has nothing to keep solvent. The three are not comparable on market cap, and shouldn't be compared on it. **ERC-8004 costly identity is the bridge** — it is how the trust Virtuals imports socially gets priced onchain, and it is what would let coverage fall below 1× price honestly.
+
+In one line: an IAO token is a bet that an agent *will be valuable*; an Orb is a promise that a person *will reply*; a Joule is a receipt that an agent *owes you work, or 10 USDC*.
