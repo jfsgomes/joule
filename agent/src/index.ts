@@ -67,19 +67,27 @@ async function main() {
   const fromBlock = head > config.lookbackBlocks ? head - config.lookbackBlocks : 0n;
   log(`scanning blocks ${fromBlock}..${head} for jobs missed while offline`);
 
-  const past = await publicClient.getContractEvents({
-    address: config.escrow,
-    abi: escrowAbi,
-    eventName: "Redeemed",
-    fromBlock,
-    toBlock: "latest",
-  });
-  for (const event of past) {
-    const { jobId, jobSpec, redeemer, deliveryDeadline } = event.args;
-    if (jobId === undefined || jobSpec === undefined) continue;
-    handle(jobId, jobSpec, redeemer as Address, deliveryDeadline ?? 0n);
+  // Fetched in windows rather than one span: providers cap the range a single
+  // eth_getLogs may cover (Alchemy's free tier allows 10 blocks), and a refusal
+  // here would abort startup before the watcher is ever armed.
+  let found = 0;
+  for (let start = fromBlock; start <= head; start += config.logWindowBlocks) {
+    const end = start + config.logWindowBlocks - 1n;
+    const past = await publicClient.getContractEvents({
+      address: config.escrow,
+      abi: escrowAbi,
+      eventName: "Redeemed",
+      fromBlock: start,
+      toBlock: end > head ? head : end,
+    });
+    for (const event of past) {
+      const { jobId, jobSpec, redeemer, deliveryDeadline } = event.args;
+      if (jobId === undefined || jobSpec === undefined) continue;
+      found++;
+      handle(jobId, jobSpec, redeemer as Address, deliveryDeadline ?? 0n);
+    }
   }
-  log(`caught up (${past.length} historical redemption${past.length === 1 ? "" : "s"})`);
+  log(`caught up (${found} recent redemption${found === 1 ? "" : "s"})`);
 
   const unwatch = publicClient.watchContractEvent({
     address: config.escrow,

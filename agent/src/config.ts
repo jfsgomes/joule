@@ -8,6 +8,8 @@ export type Config = {
   privateKey: Hex;
   /** How far back to scan for jobs missed while the agent was down. */
   lookbackBlocks: bigint;
+  /** Largest block span a single getLogs request may cover. */
+  logWindowBlocks: bigint;
   pollingIntervalMs: number;
 };
 
@@ -37,7 +39,15 @@ export function loadConfig(): Config {
     rpcUrl: required("RPC_URL"),
     escrow,
     privateKey: privateKey as Hex,
-    lookbackBlocks: BigInt(process.env.LOOKBACK_BLOCKS ?? "5000"),
+    // Only jobs still INSIDE their delivery window are actionable -- anything
+    // older has already passed its deadline and `submitWork` would revert. The
+    // window is 10 blocks, so 30 is generous slack for a slow restart and
+    // nothing beyond that is worth fetching. The old default of 5000 was
+    // arbitrary, and on providers that cap getLogs ranges it was also fatal.
+    lookbackBlocks: BigInt(process.env.LOOKBACK_BLOCKS ?? "30"),
+    // Alchemy's free tier refuses eth_getLogs spanning more than 10 blocks.
+    // Scanning in windows keeps the agent portable across providers.
+    logWindowBlocks: BigInt(process.env.LOG_WINDOW_BLOCKS ?? "10"),
     pollingIntervalMs: Number(process.env.POLLING_INTERVAL_MS ?? "4000"),
   };
 }
