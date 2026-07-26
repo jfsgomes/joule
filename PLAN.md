@@ -14,10 +14,10 @@ Verified against the [Lisbon 2026 prize page](https://ethglobal.com/events/lisbo
 
 ### Qualification checklist (cheap, easy to forget, disqualifying if missed)
 
-- [x] Public GitHub repo, open source, MIT — repo is public and `LICENSE` is a standard MIT text. **But** GitHub's API reported no detected license on 2026-07-25, and the sidebar badge is what a judge actually looks at. Confirm it renders before submitting.
+- [x] Public GitHub repo, open source, MIT — public, and GitHub now detects the licence as MIT (re-checked 2026-07-26; the earlier "no licence detected" reading has resolved itself). Homepage set to the live app.
 - [x] `FEEDBACK.md` at repo root — honest notes on the Uniswap developer experience. Two substantive findings, both reproducible: the `v4-periphery@main` vs deployed-router ABI mismatch, and a v4 pool with zero *active* liquidity being invisible to the Trading API.
 - [ ] Uniswap Developer Feedback Form submitted, linking to `FEEDBACK.md`
-- [ ] README points to specific contracts **and line numbers** for the API integration
+- [x] README points to specific contracts **and line numbers** for the API integration — "Where the Uniswap integration lives" maps each step of the buy flow (`check_approval` → `/quote` → Permit2 signature → `/swap` → send) to a file and line, plus the v4 pool maths and the escrow entry points. All 20 citations verified against the files.
 
 ---
 
