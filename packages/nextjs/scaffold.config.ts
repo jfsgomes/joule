@@ -30,10 +30,17 @@ const scaffoldConfig = {
   // If you want to use a different RPC for a specific network, you can add it here.
   // The key is the chain ID, and the value is the HTTP RPC URL
   rpcOverrides: {
-    // Public Sepolia endpoint, verified reachable during Milestone 0.
-    // The shared SE2 Alchemy key is rate-limited; set NEXT_PUBLIC_SEPOLIA_RPC to
-    // a private endpoint before the demo so a rate limit can't sink it on stage.
-    [chains.sepolia.id]: process.env.NEXT_PUBLIC_SEPOLIA_RPC || "https://ethereum-sepolia-rpc.publicnode.com",
+    // Our own proxy, which attaches the Alchemy key server-side -- see
+    // app/api/rpc/route.ts. A relative URL resolves against the current origin
+    // in the browser, which is the only place this transport is used.
+    //
+    // NOT the public Sepolia endpoint, which was the previous value: it refuses
+    // getLogs beyond ~64 blocks ("Archive requests require a personal token"),
+    // which silently breaks the job ledger and the agent's catch-up scan.
+    //
+    // NEXT_PUBLIC_RPC_PROXY overrides it with an absolute URL, which a static
+    // IPFS export needs because it has no server of its own.
+    [chains.sepolia.id]: process.env.NEXT_PUBLIC_RPC_PROXY || "/api/rpc",
   },
   // This is ours WalletConnect's default project ID.
   // You can get your own at https://cloud.walletconnect.com
