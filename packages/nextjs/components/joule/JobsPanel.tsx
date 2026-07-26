@@ -1,6 +1,7 @@
 "use client";
 
 import { Address } from "@scaffold-ui/components";
+import { useIsClient } from "usehooks-ts";
 import { type Hex, decodeAbiParameters } from "viem";
 import { useAccount, useBlockNumber } from "wagmi";
 import {
@@ -88,6 +89,9 @@ export const JobsPanel = () => {
 
 const JobRow = ({ jobId, redeemer, jobSpec }: { jobId: bigint; redeemer: string; jobSpec: Hex }) => {
   const { address } = useAccount();
+  // Same reason as BuyPanel: `address` is restored on the client only, so the
+  // label below would differ between the server and first client render.
+  const isClient = useIsClient();
   const { data: block } = useBlockNumber({ watch: true });
 
   const { data: job } = useScaffoldReadContract({
@@ -123,7 +127,7 @@ const JobRow = ({ jobId, redeemer, jobSpec }: { jobId: bigint; redeemer: string;
               className="btn btn-xs btn-error"
               onClick={() => writeContractAsync({ functionName: "claimTimeout", args: [jobId] })}
             >
-              Claim {address?.toLowerCase() === redeemer.toLowerCase() ? "refund" : "for redeemer"}
+              Claim {isClient && address?.toLowerCase() === redeemer.toLowerCase() ? "refund" : "for redeemer"}
             </button>
           ) : (
             <span className="text-xs opacity-70">{blocksLeft ?? "…"} blocks left</span>

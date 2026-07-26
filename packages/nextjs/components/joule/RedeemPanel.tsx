@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useIsClient } from "usehooks-ts";
 import { encodeAbiParameters, formatUnits, maxUint256 } from "viem";
 import { useAccount } from "wagmi";
 import { useDeployedContractInfo, useScaffoldReadContract, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
@@ -18,6 +19,9 @@ const ONE_JOULE = 10n ** 18n;
  */
 export const RedeemPanel = ({ onRedeemed }: { onRedeemed?: () => void }) => {
   const { address, isConnected } = useAccount();
+  // See BuyPanel: branching on wagmi's connection state during SSR hydrates
+  // mismatched, because the session is only restored on the client.
+  const connected = useIsClient() && isConnected;
   const [a, setA] = useState("2");
   const [b, setB] = useState("2");
   const [busy, setBusy] = useState(false);
@@ -126,9 +130,9 @@ export const RedeemPanel = ({ onRedeemed }: { onRedeemed?: () => void }) => {
         </div>
 
         <div className="card-actions mt-2">
-          <button className="btn btn-secondary w-full" onClick={redeem} disabled={!isConnected || busy || !hasJoule}>
+          <button className="btn btn-secondary w-full" onClick={redeem} disabled={!connected || busy || !hasJoule}>
             {busy ? <span className="loading loading-spinner loading-sm" /> : null}
-            {!isConnected
+            {!connected
               ? "Connect a wallet"
               : !hasJoule
                 ? "You need a whole Joule"

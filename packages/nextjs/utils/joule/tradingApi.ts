@@ -82,12 +82,22 @@ export class TradingApiError extends Error {
   }
 }
 
-async function post<T>(endpoint: string, body: unknown): Promise<T> {
-  const response = await fetch(`${BASE}/${endpoint}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+async function post<T>(endpoint: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}/${endpoint}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (error) {
+    // A rejected fetch is a TypeError with a message like "NetworkError when
+    // attempting to fetch resource" -- no status, no URL, and indistinguishable
+    // from an application bug in the console. Name what we were doing.
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new TradingApiError(0, "NetworkError", `Could not reach ${BASE}/${endpoint} — is the dev server running?`);
+  }
 
   const text = await response.text();
   let parsed: any;
@@ -120,25 +130,32 @@ export async function checkApproval(params: {
   return response.approval ?? null;
 }
 
-export async function getQuote(params: {
-  tokenIn: Address;
-  tokenOut: Address;
-  amountIn: bigint;
-  swapper: Address;
-  chainId: number;
-}): Promise<Quote> {
-  const response = await post<any>("quote", {
-    type: "EXACT_INPUT",
-    amount: params.amountIn.toString(),
-    tokenIn: params.tokenIn,
-    tokenOut: params.tokenOut,
-    tokenInChainId: params.chainId,
-    tokenOutChainId: params.chainId,
-    swapper: params.swapper,
-    // Our pool is vanilla v4 with no hook. Naming the protocol keeps the router
-    // from wandering off through v2/v3 pairs that do not exist on Sepolia.
-    protocols: ["V4"],
-  });
+export async function getQuote(
+  params: {
+    tokenIn: Address;
+    tokenOut: Address;
+    amountIn: bigint;
+    swapper: Address;
+    chainId: number;
+  },
+  signal?: AbortSignal,
+): Promise<Quote> {
+  const response = await post<any>(
+    "quote",
+    {
+      type: "EXACT_INPUT",
+      amount: params.amountIn.toString(),
+      tokenIn: params.tokenIn,
+      tokenOut: params.tokenOut,
+      tokenInChainId: params.chainId,
+      tokenOutChainId: params.chainId,
+      swapper: params.swapper,
+      // Our pool is vanilla v4 with no hook. Naming the protocol keeps the router
+      // from wandering off through v2/v3 pairs that do not exist on Sepolia.
+      protocols: ["V4"],
+    },
+    signal,
+  );
 
   const quote = response?.quote ?? {};
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useIsClient } from "usehooks-ts";
 import { type Hex, formatUnits, parseUnits } from "viem";
 import { useAccount, useSignTypedData } from "wagmi";
 import {
@@ -40,6 +41,12 @@ const FAUCET_AMOUNT = 100_000_000n; // 100 USDC
  */
 export const BuyPanel = ({ onBought }: { onBought?: () => void }) => {
   const { address, isConnected } = useAccount();
+  // wagmi restores the session from storage only on the client, so `isConnected`
+  // is false during SSR and may be true on the very first client render. Any
+  // markup that branches on it hydrates mismatched. Gating on `useIsClient`
+  // makes the server render and the first client render identical, then lets
+  // the real state land on the next paint.
+  const connected = useIsClient() && isConnected;
   const { targetNetwork } = useTargetNetwork();
   const transactor = useTransactor();
   const { signTypedDataAsync } = useSignTypedData();
@@ -85,23 +92,24 @@ export const BuyPanel = ({ onBought }: { onBought?: () => void }) => {
       return;
     }
     let cancelled = false;
+    // Aborts the in-flight request when you keep typing. Without this a
+    // superseded quote can still land and overwrite a newer one, and its
+    // cancellation surfaces as a console error rather than being ignored.
+    const controller = new AbortController();
     setQuoting(true);
 
     const timer = setTimeout(async () => {
       try {
-        const next = await getQuote({
-          tokenIn: usdcAddress,
-          tokenOut: jouleAddress,
-          amountIn,
-          swapper: address,
-          chainId,
-        });
+        const next = await getQuote(
+          { tokenIn: usdcAddress, tokenOut: jouleAddress, amountIn, swapper: address, chainId },
+          controller.signal,
+        );
         if (!cancelled) {
           setQuote(next);
           setQuoteError(null);
         }
       } catch (error) {
-        if (cancelled) return;
+        if (cancelled || controller.signal.aborted) return;
         setQuote(null);
         setQuoteError(describeQuoteError(error));
       } finally {
@@ -111,6 +119,7 @@ export const BuyPanel = ({ onBought }: { onBought?: () => void }) => {
 
     return () => {
       cancelled = true;
+      controller.abort();
       clearTimeout(timer);
     };
   }, [address, usdcAddress, jouleAddress, amountIn, chainId]);
@@ -227,7 +236,7 @@ export const BuyPanel = ({ onBought }: { onBought?: () => void }) => {
 
         <div className="flex items-center justify-between mt-1">
           <span className="text-xs opacity-70">Balance {Number(formatUnits(held, USDC_DECIMALS)).toFixed(2)} USDC</span>
-          <button className="btn btn-ghost btn-xs" onClick={mintTestUsdc} disabled={!isConnected || minting}>
+          <button className="btn btn-ghost btn-xs" onClick={mintTestUsdc} disabled={!connected || minting}>
             {minting ? <span className="loading loading-spinner loading-xs" /> : null}
             Mint 100 test USDC
           </button>
@@ -261,10 +270,10 @@ export const BuyPanel = ({ onBought }: { onBought?: () => void }) => {
           <button
             className="btn btn-primary w-full"
             onClick={buy}
-            disabled={!isConnected || busy || !quote || amountIn <= 0n || insufficient}
+            disabled={!connected || busy || !quote || amountIn <= 0n || insufficient}
           >
             {busy ? <span className="loading loading-spinner loading-sm" /> : null}
-            {!isConnected ? "Connect a wallet" : insufficient ? "Not enough USDC" : busy ? "Buying…" : "Buy"}
+            {!connected ? "Connect a wallet" : insufficient ? "Not enough USDC" : busy ? "Buying…" : "Buy"}
           </button>
         </div>
       </div>
