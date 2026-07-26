@@ -67,6 +67,23 @@ All four contracts are source-verified on Sepolia.
 | `SumVerifier` — the one trust root worth reading | [`SumVerifier.sol`](./packages/foundry/contracts/verifiers/SumVerifier.sol) | [`0x7664…8119d`](https://sepolia.etherscan.io/address/0x7664b864e2209935b599E40De3C336428668119d#code) |
 
 ---
+## AI tooling & what's reused
+
+Built with Claude (Opus 5) via Claude Code, human-directed throughout: the
+mechanism design, scope decisions, and review findings are ours; generation
+was AI-assisted. Every AI-assisted commit carries a
+`Co-Authored-By: Claude Opus 5` trailer — the git history is the audit log.
+Planning artifacts are in the repo as required for spec-driven workflows:
+[PLAN.md](./PLAN.md) (living plan), [AGENTS.md](./AGENTS.md), and the
+review agent in `.agents/agents/`. AI-assisted code was reviewed by a
+custom adversarial code-review agent and hardened against its findings
+(see commit "Harden WorkEscrow against the review findings").
+
+Reused: Scaffold-ETH 2 (create-eth, Foundry flavour) as the starter kit —
+`packages/nextjs/{components,hooks,utils}/scaffold-eth`, the blockexplorer
+and debug pages, and CI skeleton. Hackathon work: everything under
+`packages/foundry/{contracts,test,script}`, `agent/`,
+`packages/nextjs/{components/joule,utils/joule,app/api}`, and all docs.
 
 ## Thesis
 
