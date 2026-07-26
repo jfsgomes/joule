@@ -1,9 +1,9 @@
 "use client";
 
-import { Address } from "@scaffold-ui/components";
 import { useIsClient } from "usehooks-ts";
 import { type Hex, decodeAbiParameters } from "viem";
 import { useAccount, useBlockNumber } from "wagmi";
+import { Panel } from "~~/components/joule/Panel";
 import {
   useDeployedContractInfo,
   useScaffoldEventHistory,
@@ -14,12 +14,12 @@ import {
 /** Mirrors WorkEscrow.Status. */
 const STATUS = ["None", "Open", "Submitted", "Disputed", "Settled", "Slashed"] as const;
 
-const BADGE: Record<string, string> = {
-  Open: "badge-warning",
-  Submitted: "badge-info",
-  Disputed: "badge-error",
-  Settled: "badge-success",
-  Slashed: "badge-error",
+const TAG_COLOR: Record<string, string> = {
+  Open: "var(--jl-accent)",
+  Submitted: "var(--jl-data)",
+  Disputed: "var(--jl-alarm)",
+  Settled: "var(--jl-data)",
+  Slashed: "var(--jl-alarm)",
 };
 
 /**
@@ -49,48 +49,49 @@ export const JobsPanel = () => {
     .sort((x, y) => Number(y.jobId - x.jobId));
 
   return (
-    <div className="card bg-base-100 shadow-xl">
-      <div className="card-body">
-        <h2 className="card-title">Jobs</h2>
-        <p className="text-sm opacity-70 -mt-2">
-          Every redemption, and what became of it. With the demo agent running, a job settles within a block or two.
+    <Panel
+      kind="read"
+      code="LDG"
+      title="Job ledger"
+      note="Live from chain"
+      hint="Every job and what became of it. Settled means the agent delivered and a contract checked the answer; slashed means it did not, and the holder took its collateral."
+    >
+      {isLoading ? (
+        <p className="jl-dim" style={{ margin: "24px 0", textAlign: "center" }}>
+          Reading the chain…
         </p>
-
-        {isLoading ? (
-          <div className="flex justify-center py-8">
-            <span className="loading loading-dots loading-lg" />
-          </div>
-        ) : jobs.length === 0 ? (
-          <p className="text-sm opacity-60 py-6 text-center m-0">No jobs yet. Redeem a Joule to commission one.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="table table-sm">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Job</th>
-                  <th>Redeemer</th>
-                  <th>Status</th>
-                  <th className="text-right">Deadline</th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map(job => (
-                  <JobRow key={job.jobId.toString()} {...job} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
+      ) : jobs.length === 0 ? (
+        <p className="jl-prose" style={{ margin: "24px 0", textAlign: "center" }}>
+          No jobs yet. Redeem a Joule to commission one.
+        </p>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="jl-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Job</th>
+                <th>Redeemer</th>
+                <th>Outcome</th>
+                <th style={{ textAlign: "right" }}>Deadline</th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.map(job => (
+                <JobRow key={job.jobId.toString()} {...job} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
   );
 };
 
 const JobRow = ({ jobId, redeemer, jobSpec }: { jobId: bigint; redeemer: string; jobSpec: Hex }) => {
   const { address } = useAccount();
-  // Same reason as BuyPanel: `address` is restored on the client only, so the
-  // label below would differ between the server and first client render.
+  // `address` is restored on the client only, so the label below would differ
+  // between the server and first client render.
   const isClient = useIsClient();
   const { data: block } = useBlockNumber({ watch: true });
 
@@ -105,35 +106,41 @@ const JobRow = ({ jobId, redeemer, jobSpec }: { jobId: bigint; redeemer: string;
 
   const deliveryDeadline = job?.[1] ?? 0n;
   const status = STATUS[Number(job?.[3] ?? 0)] ?? "None";
-
   const blocksLeft = block && deliveryDeadline > 0n ? Number(deliveryDeadline - block) : null;
-  const expired = blocksLeft !== null && blocksLeft < 0;
-  const claimable = status === "Open" && expired;
+  const claimable = status === "Open" && blocksLeft !== null && blocksLeft < 0;
+  const mine = isClient && address?.toLowerCase() === redeemer.toLowerCase();
 
   return (
     <tr>
-      <td className="font-mono">{jobId.toString()}</td>
-      <td className="font-mono text-xs">{describeSpec(jobSpec)}</td>
-      <td>
-        <Address address={redeemer as `0x${string}`} size="xs" onlyEnsOrAddress />
+      <td className="jl-dim">{jobId.toString().padStart(2, "0")}</td>
+      <td>{describeSpec(jobSpec)}</td>
+      <td className="jl-dim">
+        {redeemer.slice(0, 6)}…{redeemer.slice(-4)}
+        {mine ? " (you)" : ""}
       </td>
       <td>
-        <span className={`badge badge-sm ${BADGE[status] ?? "badge-ghost"}`}>{status}</span>
+        <span className="jl-tag" style={{ color: TAG_COLOR[status] ?? "var(--jl-dim)" }}>
+          {status}
+        </span>
       </td>
-      <td className="text-right">
+      <td style={{ textAlign: "right" }}>
         {status === "Open" ? (
           claimable ? (
             <button
-              className="btn btn-xs btn-error"
+              className="jl-btn"
+              style={{ margin: 0, width: "auto", padding: "9px 16px", fontSize: 12, display: "inline-block" }}
+              type="button"
               onClick={() => writeContractAsync({ functionName: "claimTimeout", args: [jobId] })}
             >
-              Claim {isClient && address?.toLowerCase() === redeemer.toLowerCase() ? "refund" : "for redeemer"}
+              {mine ? "Claim refund" : "Claim for redeemer"}
             </button>
           ) : (
-            <span className="text-xs opacity-70">{blocksLeft ?? "…"} blocks left</span>
+            <span className="jl-dim" style={{ fontSize: "var(--jl-small)" }}>
+              {blocksLeft ?? "…"} blocks left
+            </span>
           )
         ) : (
-          <span className="text-xs opacity-40">—</span>
+          <span style={{ color: "var(--jl-rule-dim)" }}>—</span>
         )}
       </td>
     </tr>
