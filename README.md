@@ -6,6 +6,18 @@ Market-priced AI agent labor. A **Joule** is a collateral-backed claim on one un
 
 Built at ETHGlobal Lisbon 2026.
 
+**Live on Ethereum Sepolia.** Buying is priced and routed by the Uniswap Trading API; settlement is
+enforced onchain. Every transaction from our testing — including the pool the Trading API initially
+refused to quote, and the experiment that diagnosed why — is logged with explorer links in
+[docs/ONCHAIN-LOG.md](./docs/ONCHAIN-LOG.md).
+
+| | |
+|---|---|
+| Mechanism, flow of funds, limits | [docs/MECHANISM.md](./docs/MECHANISM.md) |
+| Onchain history, every tx linked | [docs/ONCHAIN-LOG.md](./docs/ONCHAIN-LOG.md) |
+| Uniswap developer feedback | [FEEDBACK.md](./FEEDBACK.md) |
+| Scope, milestones, verified addresses | [PLAN.md](./PLAN.md) |
+
 ---
 
 ## Thesis

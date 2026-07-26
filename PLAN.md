@@ -220,6 +220,8 @@ Build everything against a **local fork of Sepolia**, then touch the live chain 
 
 Note the Sepolia deploy is **not** last. A public frontend URL pointing at a laptop's anvil is not a demo, so the deploy has to land between "frontend works locally" and "frontend deployed".
 
+**Deviation, decided 2026-07-26: Milestone 5 targets live Sepolia, not the fork.** The Trading API indexes real chains, so it cannot quote a pool that exists only in a local anvil — and the buy flow *is* the prize deliverable. Since a wallet can only be on one chain at a time, the fork and the Trading API were mutually exclusive. Contracts were already deployed and the pool already quotable from the Milestone 3 probe, so this brought most of Milestone 6 forward rather than adding work. What the fork still earns is contract iteration: `yarn test:fork` continues to run against it.
+
 | # | Milestone | Definition of done | Status |
 |---|---|---|---|
 | 0 | Toolchain | `foundryup` installed; scaffold committed; `.gitignore` covers `.env`, `broadcast/`, `cache/`; deployer funded; all six v4 addresses verified with `cast code` | ✅ |
@@ -227,8 +229,8 @@ Note the Sepolia deploy is **not** last. A public frontend URL pointing at a lap
 | 2 | Test depth | Fuzz on all math, all five invariants passing | ✅ *(fork test deferred to 3 — nothing touches Uniswap yet)* |
 | 3 | Pool live | `JOULE/USDC` v4 pool seeded on a Sepolia fork; swap works from a script; fork test against real v4 | ✅ |
 | 4 | Agent loop | Demo agent auto-delivers on `Redeemed` events | ✅ |
-| 5 | Frontend functional | Buy → redeem → settle end to end against the fork; Trading API driving the buy | ← next |
-| 6 | Deployed + verified | Live on Sepolia, verified on Etherscan, pokeable via abi.ninja; local UI repointed at it | |
+| 5 | Frontend functional | Buy → redeem → settle end to end; Trading API driving the buy | ✅ |
+| 6 | Deployed + verified | Live on Sepolia, verified on Etherscan, pokeable via abi.ninja; local UI repointed at it | ← next *(deployed and wired; Etherscan verification outstanding)* |
 | 7 | Frontend beautiful | Design pass, price chart, SE2 branding gone, Vercel deploy | |
 | 8 | Slash demo | Timeout path demoable on purpose | |
 | 9 | Prize hygiene | `FEEDBACK.md`, README line refs, form submitted | |

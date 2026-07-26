@@ -1,73 +1,49 @@
 "use client";
 
-import Link from "next/link";
-import { Address } from "@scaffold-ui/components";
+import { useCallback, useState } from "react";
 import type { NextPage } from "next";
-import { useAccount } from "wagmi";
-import { BugAntIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
-import { useTargetNetwork } from "~~/hooks/scaffold-eth";
+import { BuyPanel } from "~~/components/joule/BuyPanel";
+import { EscrowStats } from "~~/components/joule/EscrowStats";
+import { JobsPanel } from "~~/components/joule/JobsPanel";
+import { RedeemPanel } from "~~/components/joule/RedeemPanel";
 
+/**
+ * The demo, in the order the script runs it:
+ *
+ *   buy a Joule on the open market  ->  spend it on work  ->  watch it settle
+ *
+ * Milestone 7 is the design pass; this is deliberately plain.
+ */
 const Home: NextPage = () => {
-  const { address: connectedAddress } = useAccount();
-  const { targetNetwork } = useTargetNetwork();
+  // Cheap cross-panel nudge: buying changes the balance Redeem reads, and
+  // redeeming adds a row to Jobs. Both already poll, so this only shortens the
+  // wait rather than being load-bearing.
+  const [, setRefreshKey] = useState(0);
+  const refresh = useCallback(() => setRefreshKey(key => key + 1), []);
 
   return (
-    <>
-      <div className="flex items-center flex-col grow pt-10">
-        <div className="px-5">
-          <h1 className="text-center">
-            <span className="block text-2xl mb-2">Welcome to</span>
-            <span className="block text-4xl font-bold">Scaffold-ETH 2</span>
-          </h1>
-          <div className="flex justify-center items-center space-x-2 flex-col">
-            <p className="my-2 font-medium">Connected Address:</p>
-            <Address address={connectedAddress} chain={targetNetwork} />
-          </div>
+    <div className="flex flex-col grow w-full px-4 sm:px-8 py-8 gap-6 max-w-6xl mx-auto">
+      <header>
+        <h1 className="text-4xl font-bold m-0">Joule</h1>
+        <p className="opacity-70 mt-1 mb-0">
+          A Joule is one unit of an agent&apos;s work — collateral-backed, redeemable, and priced by a market rather
+          than set by its issuer.
+        </p>
+      </header>
 
-          <p className="text-center text-lg">
-            Get started by editing{" "}
-            <code className="italic bg-base-300 text-base font-bold max-w-full break-words break-all inline-block">
-              packages/nextjs/app/page.tsx
-            </code>
-          </p>
-          <p className="text-center text-lg">
-            Edit your smart contract{" "}
-            <code className="italic bg-base-300 text-base font-bold max-w-full break-words break-all inline-block">
-              WorkEscrow.sol
-            </code>{" "}
-            in{" "}
-            <code className="italic bg-base-300 text-base font-bold max-w-full break-words break-all inline-block">
-              packages/foundry/contracts
-            </code>
-          </p>
-        </div>
+      <EscrowStats />
 
-        <div className="grow bg-base-300 w-full mt-16 px-8 py-12">
-          <div className="flex justify-center items-center gap-12 flex-col md:flex-row">
-            <div className="flex flex-col bg-base-100 border border-base-300 px-10 py-10 text-center items-center max-w-xs">
-              <BugAntIcon className="h-8 w-8" />
-              <p>
-                Tinker with your smart contract using the{" "}
-                <Link href="/debug" passHref className="link">
-                  Debug Contracts
-                </Link>{" "}
-                tab.
-              </p>
-            </div>
-            <div className="flex flex-col bg-base-100 border border-base-300 px-10 py-10 text-center items-center max-w-xs">
-              <MagnifyingGlassIcon className="h-8 w-8" />
-              <p>
-                Explore your local transactions with the{" "}
-                <Link href="/blockexplorer" passHref className="link">
-                  Block Explorer
-                </Link>{" "}
-                tab.
-              </p>
-            </div>
-          </div>
-        </div>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <BuyPanel onBought={refresh} />
+        <RedeemPanel onRedeemed={refresh} />
       </div>
-    </>
+
+      <JobsPanel />
+
+      <footer className="text-xs opacity-50 text-center pb-4">
+        Buy priced and routed by the Uniswap Trading API · settlement enforced onchain by WorkEscrow
+      </footer>
+    </div>
   );
 };
 
