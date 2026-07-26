@@ -15,17 +15,25 @@ Deployer / agent: [`0x37B5b8BF…eee20A`](https://sepolia.etherscan.io/address/0
 
 ## Contracts
 
-The live set, which the frontend points at:
+The live set, which the frontend points at. **All source-verified on Etherscan** — the `#code` tab
+shows the real source, and the published ABIs match the local artifacts function for function.
 
-| Contract | Address |
-|---|---|
-| `WorkEscrow` | [`0xACaf9974…87D53`](https://sepolia.etherscan.io/address/0xACaf997478F466737d82c66fECAAB95e27987D53) |
-| `JouleToken` | [`0x57d89f6C…79399`](https://sepolia.etherscan.io/address/0x57d89f6Ca5f684312190b7C1EF2d24dF33879399) |
-| `MockUSDC` | [`0xCd7Bd62E…43007`](https://sepolia.etherscan.io/address/0xCd7Bd62E6C0439853393Df29a8619B04e2943007) |
-| `SumVerifier` | [`0x7664b864…8119d`](https://sepolia.etherscan.io/address/0x7664b864e2209935b599E40De3C336428668119d) |
+| Contract | Address | Source |
+|---|---|---|
+| `WorkEscrow` | [`0xACaf9974…87D53`](https://sepolia.etherscan.io/address/0xACaf997478F466737d82c66fECAAB95e27987D53) | [verified](https://sepolia.etherscan.io/address/0xACaf997478F466737d82c66fECAAB95e27987D53#code) |
+| `JouleToken` | [`0x57d89f6C…79399`](https://sepolia.etherscan.io/address/0x57d89f6Ca5f684312190b7C1EF2d24dF33879399) | [verified](https://sepolia.etherscan.io/address/0x57d89f6Ca5f684312190b7C1EF2d24dF33879399#code) |
+| `MockUSDC` | [`0xCd7Bd62E…43007`](https://sepolia.etherscan.io/address/0xCd7Bd62E6C0439853393Df29a8619B04e2943007) | [verified](https://sepolia.etherscan.io/address/0xCd7Bd62E6C0439853393Df29a8619B04e2943007#code) |
+| `SumVerifier` | [`0x7664b864…8119d`](https://sepolia.etherscan.io/address/0x7664b864e2209935b599E40De3C336428668119d) | [verified](https://sepolia.etherscan.io/address/0x7664b864e2209935b599E40De3C336428668119d#code) |
+
+Verification matters more than usual here. `MECHANISM.md` argues the verifier is the system's one
+total trust root — two one-line implementations of `IVerifier` would break the escrow completely —
+so **reading `SumVerifier`'s source is not optional** for anyone evaluating a Joule. An unverified
+contract makes that impossible.
 
 `JouleToken` has no deploy transaction of its own — `WorkEscrow` creates it inside its constructor,
-which is what fixes the minter to the escrow by construction rather than by a setter.
+which is what fixes the minter to the escrow by construction rather than by a setter. That is also
+why SE-2's `yarn verify` cannot see it; `yarn verify:sepolia` reads the same
+`deployments/<chainId>.nested.json` manifest the ABI generator uses.
 
 Uniswap v4, verified onchain before use (each peripheral's `.poolManager()` resolves to the same
 PoolManager):

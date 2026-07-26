@@ -19,7 +19,8 @@
     "test": "forge test --no-match-path 'test/fork/*'",
     "test:fork": "forge test --match-path 'test/fork/*' -vv",
     "test:all": "forge test",
-    "verify": "make verify RPC_URL=${1:-localhost}"
+    "verify": "make verify RPC_URL=${1:-localhost}",
+    "verify:sepolia": "node scripts-js/verifyContracts.js sepolia"
   },
   "dependencies": {
     "dotenv": "~16.3.1",
