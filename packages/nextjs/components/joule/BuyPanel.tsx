@@ -3,7 +3,13 @@
 import { useEffect, useState } from "react";
 import { type Hex, formatUnits, parseUnits } from "viem";
 import { useAccount, useSignTypedData } from "wagmi";
-import { useDeployedContractInfo, useTargetNetwork, useTransactor } from "~~/hooks/scaffold-eth";
+import {
+  useDeployedContractInfo,
+  useScaffoldReadContract,
+  useScaffoldWriteContract,
+  useTargetNetwork,
+  useTransactor,
+} from "~~/hooks/scaffold-eth";
 import {
   type Quote,
   TradingApiError,
@@ -17,6 +23,9 @@ import { notification } from "~~/utils/scaffold-eth";
 const USDC_DECIMALS = 6;
 const JOULE_DECIMALS = 18;
 const QUOTE_DEBOUNCE_MS = 400;
+
+/** One tap should cover several demo buys without becoming a second chore. */
+const FAUCET_AMOUNT = 100_000_000n; // 100 USDC
 
 /**
  * Demo step 2: buy a Joule on the open market.
@@ -43,6 +52,15 @@ export const BuyPanel = ({ onBought }: { onBought?: () => void }) => {
   const [quoting, setQuoting] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [minting, setMinting] = useState(false);
+
+  const { data: usdcBalance, refetch: refetchUsdcBalance } = useScaffoldReadContract({
+    contractName: "MockUSDC",
+    functionName: "balanceOf",
+    args: [address],
+    watch: true,
+  });
+  const { writeContractAsync: writeUsdc } = useScaffoldWriteContract({ contractName: "MockUSDC" });
 
   const usdcAddress = usdc?.address;
   const jouleAddress = joule?.address;
@@ -96,6 +114,25 @@ export const BuyPanel = ({ onBought }: { onBought?: () => void }) => {
       clearTimeout(timer);
     };
   }, [address, usdcAddress, jouleAddress, amountIn, chainId]);
+
+  /**
+   * MockUSDC is deliberately open-mint -- see its contract notes. That is only
+   * acceptable because it is a disposable testnet token, and it is what lets the
+   * demo be re-run without queueing at a faucet.
+   */
+  const mintTestUsdc = async () => {
+    if (!address) return;
+    setMinting(true);
+    try {
+      await writeUsdc({ functionName: "mint", args: [address, FAUCET_AMOUNT] });
+      await refetchUsdcBalance();
+    } catch (error) {
+      // useScaffoldWriteContract already toasts a parsed error.
+      console.error(error);
+    } finally {
+      setMinting(false);
+    }
+  };
 
   const buy = async () => {
     if (!address || !usdcAddress || amountIn <= 0n) return;
@@ -160,6 +197,11 @@ export const BuyPanel = ({ onBought }: { onBought?: () => void }) => {
   const out = quote ? Number(formatUnits(quote.amountOut, JOULE_DECIMALS)) : null;
   const unitPrice = quote && quote.amountOut > 0n ? Number(amount) / (out ?? 1) : null;
 
+  const held = usdcBalance ?? 0n;
+  // Caught here rather than left to revert inside the router, where the error is
+  // several frames deep and says nothing about balance.
+  const insufficient = amountIn > held;
+
   return (
     <div className="card bg-base-100 shadow-xl">
       <div className="card-body">
@@ -182,6 +224,14 @@ export const BuyPanel = ({ onBought }: { onBought?: () => void }) => {
             disabled={busy}
           />
         </label>
+
+        <div className="flex items-center justify-between mt-1">
+          <span className="text-xs opacity-70">Balance {Number(formatUnits(held, USDC_DECIMALS)).toFixed(2)} USDC</span>
+          <button className="btn btn-ghost btn-xs" onClick={mintTestUsdc} disabled={!isConnected || minting}>
+            {minting ? <span className="loading loading-spinner loading-xs" /> : null}
+            Mint 100 test USDC
+          </button>
+        </div>
 
         <div className="bg-base-200 rounded-box p-4 mt-2 min-h-24 flex flex-col justify-center">
           {quoting ? (
@@ -211,10 +261,10 @@ export const BuyPanel = ({ onBought }: { onBought?: () => void }) => {
           <button
             className="btn btn-primary w-full"
             onClick={buy}
-            disabled={!isConnected || busy || !quote || amountIn <= 0n}
+            disabled={!isConnected || busy || !quote || amountIn <= 0n || insufficient}
           >
             {busy ? <span className="loading loading-spinner loading-sm" /> : null}
-            {!isConnected ? "Connect a wallet" : busy ? "Buying…" : "Buy"}
+            {!isConnected ? "Connect a wallet" : insufficient ? "Not enough USDC" : busy ? "Buying…" : "Buy"}
           </button>
         </div>
       </div>
