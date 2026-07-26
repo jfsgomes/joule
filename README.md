@@ -52,9 +52,6 @@ client-side would be a second source of truth that can silently disagree with th
 | Seed execution — initialize and mint both ranges | [`JoulePoolSeeder.sol:194`](./packages/foundry/script/JoulePoolSeeder.sol#L194) |
 | Fallback: direct Universal Router swap | [`SwapJoule.s.sol`](./packages/foundry/script/SwapJoule.s.sol) |
 
-That "pinned to spot" line is the hard-won one: a pool with **no active liquidity at the current
-tick** is invisible to the Trading API even though it holds inventory. Diagnosing that cost a
-deployment and is written up in [FEEDBACK.md](./FEEDBACK.md).
 
 ### The escrow that makes a Joule worth something
 

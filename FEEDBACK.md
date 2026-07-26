@@ -3,10 +3,6 @@
 Notes from building **Joule** at ETHGlobal Lisbon 2026. We integrated the **Trading API** for the
 buy/sell flow and Uniswap **v4** for a `JOULE/USDC` pool on Ethereum Sepolia.
 
-This is written to be useful rather than polite: the things that cost us hours are described in
-enough detail to reproduce, and the things that worked are named specifically so it is clear what
-not to change.
-
 **Environment.** `v4-periphery` at `3245c3c` (tracking `main`, 2026-07-13) · Foundry `forge 1.7.1`
 · Ethereum Sepolia (11155111) · PoolManager `0xE03A1074c86CFeDd5C142C4F04F1a1536e203543` ·
 Universal Router `0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b` · findings dated 2026-07-25.
@@ -15,15 +11,15 @@ Universal Router `0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b` · findings dated 
 
 ## What worked well
 
-Genuinely, and worth saying before the complaints:
+Worth naming specifically, since it is easy to only report problems:
 
 - **The Trading API returns calldata for the router that is actually deployed.** This turned out
   to matter enormously — see finding 1. Building the calldata ourselves is where we got hurt;
   asking the API for it was the version-proof path. That is a real architectural advantage and
   we would not have appreciated it without having done both.
 - **`protocols` is the right abstraction.** Being able to say `["V4"]` and get a `v4-pool` route
-  back, with `V4_HOOKS_INCLUSIVE` / `V4_HOOKS_ONLY` / `V4_NO_HOOKS` as further refinement, is a
-  clean model. `V4_NO_HOOKS` described our pool exactly.
+  back, with `hooksOptions` (`V4_HOOKS_INCLUSIVE` / `V4_HOOKS_ONLY` / `V4_NO_HOOKS`) as further
+  refinement, is a clean model. `V4_NO_HOOKS` described our pool exactly.
 - **Named custom errors across v4-core and v4-periphery.** `DeadlinePassed(uint256)` in particular
   told us precisely what was wrong, in a situation where a `require` string would have been
   ambiguous. `cast 4byte` resolves them, which makes debugging tractable.
@@ -31,14 +27,15 @@ Genuinely, and worth saying before the complaints:
   `tickSpacing: 1`. Worth knowing, since a lot of third-party advice says to stick to the
   canonical tiers for routability.
 - **v4 itself is unfussy about sparse liquidity.** A swap gaps to the next initialised tick and
-  fills. That behaviour is correct and we relied on it — it is only the *router* that disagrees,
-  which is finding 2.
+  fills. That behaviour is correct and we relied on it; finding 2 is about the routing layer
+  appearing to expect something stricter.
 
 ---
 
-## Finding 1 — `v4-periphery@main` is ABI-incompatible with deployed Universal Routers, and fails silently
+## Finding 1 — `v4-periphery@main` encodes swap params the deployed Universal Router cannot decode
 
-**Severity: high.** This is the one we would most like fixed.
+This one we were able to trace to a specific commit, so we state it with more confidence than
+Finding 2.
 
 ### What happened
 
@@ -68,7 +65,7 @@ The minimum-length guard in `decodeSwapExactInSingleParams` moved from `0x140` t
 change, so it validates the *new* layout and cannot detect an old consumer being handed new
 encoding — or vice versa.
 
-### Why it is expensive
+### Why it took a while
 
 The failure is indistinguishable from the other things that make a v4 swap revert:
 
@@ -79,16 +76,6 @@ The failure is indistinguishable from the other things that make a v4 swap rever
 We checked all three first, because each is more likely a priori than "the struct grew a field".
 Reaching the real cause meant reading `CalldataDecoder` assembly and `git log -S minHopPriceX36`.
 
-### Suggested fixes, cheapest first
-
-1. **Version the docs.** State on the swapping pages which `v4-periphery` tag corresponds to the
-   deployed routers per chain. A single table would have prevented this entirely.
-2. **Tag releases and point people at tags, not `main`.** The natural `forge install uniswap/v4-periphery`
-   gives you `main`, which is ahead of every deployment.
-3. **Make the struct version-detectable.** If the action byte for a params layout changed when the
-   layout changed, an old router would reject a new payload with a specific error instead of
-   walking off the end of a buffer.
-
 ### Workaround
 
 We declared the pre-#516 struct locally rather than pinning the whole submodule backwards, since
@@ -96,14 +83,14 @@ We declared the pre-#516 struct locally rather than pinning the whole submodule 
 downgrading everything to fix one struct would have traded a documented local workaround for an
 undocumented global one.
 
-→ `packages/foundry/script/SwapJoule.s.sol:53` (`LegacyExactInputSingleParams`, with the full
-explanation at lines 30–52) and its use at line 145.
-
 ---
 
-## Finding 2 — a v4 pool with zero *active* liquidity is invisible to the Trading API
+## Finding 2 — no route for a pool with zero active liquidity at the current tick
 
-**Severity: high.** This cost us a deployment to diagnose and is, we think, genuinely surprising.
+In our Sepolia deployment the Trading API returned no route while the pool had zero active
+liquidity at the current tick, despite holding inventory in nearby ranges. It began routing the
+same pool after we added a small position spanning the current tick. We found no documentation of
+this apparent routing requirement.
 
 ### What happened
 
@@ -122,42 +109,35 @@ The Trading API returned, in both directions:
 HTTP 404  {"errorCode":"ResourceNotFound","detail":"No quotes available"}
 ```
 
-### Diagnosis
+### What we measured
 
-Because spot sat in the 4.80/5.00 gap, `StateView.getLiquidity(poolId)` was **0** at the current
-tick. Inventory existed; none of it was *active*.
+Because spot sat in the 4.80/5.00 gap, `StateView.getLiquidity(poolId)` returned **0** at the
+current tick. Inventory existed; none of it was active there.
 
-We ruled out indexing lag with a 24-minute poll, then ran a one-variable experiment on the same
-pool, same tokens, same fee tier: mint a small position spanning the current tick.
+We minted a small position spanning the current tick — same pool, same
+tokens, same fee tier — and re-queried.
 
 | | active liquidity at spot | Trading API |
 |---|---|---|
 | as originally seeded | `0` | `404 ResourceNotFound` |
 | after adding ~$5 spanning spot | `35645481612126` | `200`, `"route":"v4-pool"` |
 
-Aggregate depth moved from roughly $69 to $74. **Thinness was never the problem** — the API
-quotes a $70 pool without complaint. A hole at spot is fatal; a shallow book is not.
+Aggregate depth moved from roughly $69 to $74, so the change in total liquidity was small.
 
-### Why this is worth fixing
+The observation is consistent with a routing requirement for active liquidity at the current tick, 
+and we could not find that requirement documented. Someone with visibility into the router could 
+confirm or dismiss it.
 
-The configuration that triggers it is not exotic — it is the canonical single-sided range order,
-the thing v3/v4 concentrated liquidity is *for*. Anyone bootstrapping a new token with inventory
-but no paired capital will land on it naturally, and will conclude the API does not support their
-pool, their chain, or new tokens.
+### Why it seemed worth reporting anyway
 
-The failure gives no signal about which. `404 ResourceNotFound` is returned identically for an
-unknown token, a non-existent pool, and a real pool that merely has a gap at spot. We only
-distinguished them by deploying and experimenting.
+The configuration is not exotic. It is the canonical single-sided range order — inventory placed
+entirely above spot, converting as buyers push through it — which is close to the reason
+concentrated liquidity exists. Anyone bootstrapping a token with inventory but no paired capital
+may arrive at it naturally.
 
-### Suggested fixes
-
-1. **Differentiate the error.** Something like `NoActiveLiquidity` with the pool id would have
-   turned a multi-hour investigation into a one-line fix. The router already knows the difference.
-2. **Consider routing through the gap.** v4 does this natively — a swap crosses uninitialised
-   ticks and fills at the next range. A router that simulated the same way would quote these
-   pools correctly.
-3. **Document it.** A sentence on the liquidity page saying the router requires liquidity at the
-   current tick, not merely in the pool, would be enough.
+And `404 ResourceNotFound` is returned identically for an unknown token, a non-existent pool, and
+a real pool we could later route against. With no way to tell those apart, our first conclusion was
+that the API did not support new tokens on testnets, which would have been the wrong lesson.
 
 ### Our fix
 
@@ -181,61 +161,13 @@ loosened check) · guard at `packages/foundry/script/JoulePoolSeeder.sol:155` (`
 
 ---
 
-## Finding 3 — v4 support is hard to confirm from the Trading API docs
-
-**Severity: medium.** Purely a documentation-navigation problem, but it nearly changed our
-architecture.
-
-Reading the supported-chains material, we could not determine whether v4 pools were routable —
-the chain/router-version tables are framed around Universal Router versions, and we came away
-believing v4 might be v2/v3-only. That very nearly pushed us to deploy a v3 pool instead, which
-would have been a significant and unnecessary rewrite.
-
-The answer was on the quote API reference: `protocols` accepts `V4`, with the `V4_HOOKS_*` options
-alongside it. Cross-linking the two — or a "protocol support" column on the chains table — would
-close the gap.
-
-**Suggestion:** state v4 support explicitly on the supported-chains page, per chain. For a team
-choosing an architecture on day one of a hackathon, "is v4 routable here" is close to the first
-question asked.
-
----
-
-## Smaller notes
-
-**Permit2 is two approvals, not one.** `IERC20.approve(permit2, ...)` then
-`permit2.approve(token, spender, ...)`. Missing the second succeeds locally and fails deep inside
-Permit2 later. This *is* documented — we mention it only because it is the single most common
-thing we saw others hit, and a callout box near the first `PositionManager` example would earn its
-space. → `packages/foundry/script/JoulePoolSeeder.sol:248`.
-
-**`deadline` and scripted broadcasts.** Our bug, not Uniswap's, but the interaction is worth
-naming. In a Foundry script, `block.timestamp + 60` is evaluated during *simulation* and baked into
-broadcast calldata; the transaction then lands minutes later, in wall-clock time, and reverts
-`DeadlinePassed`. Fork tests cannot catch it — they run in one frozen-timestamp context where no
-time passes at all. `DeadlinePassed(uint256)` naming the expired value is exactly what made this
-diagnosable, so this is half a compliment. → `packages/foundry/script/JoulePoolSeeder.sol:199`,
-where the deadline is a required parameter specifically so it cannot be computed at simulation time.
-
-**`initializePool` returning `type(int24).max`** instead of reverting when the pool exists is a
-good design — it let us make seeding idempotent after a partially-broadcast run, by checking
-whether the existing pool is still at our intended price rather than blanket-refusing. Not obvious
-from the signature; worth an example.
-
-**Token ordering deserves louder placement.** `token0` is decided by address comparison, so which
-side of the pool your token lands on is not yours to choose unless you mine a salt. Every piece of
-tick reasoning inverts with it. We wrote our maths to take `jouleIsToken0` explicitly and tested
-both branches, and both branches occurred across two real deployments — this is not a theoretical
-concern.
-
----
-
 ## What we would tell the next team
 
 1. Pin `v4-periphery` to a tag matching the deployed routers on your chain, or let the Trading API
    build your calldata. Do not hand-encode router actions from `main`.
-2. Make sure liquidity is **active at your opening tick**, not merely present in the pool.
-   Check `StateView.getLiquidity(poolId) > 0` immediately after seeding — one assertion.
+2. Assert `StateView.getLiquidity(poolId) > 0` immediately after seeding. Whatever the underlying
+   cause, a pool with nothing active at its opening tick was not routable for us, and one line
+   catches it before you deploy.
 3. Never assume your token is `token0`. Branch on the address comparison and test both.
 4. Verify every v4 address onchain. They are not deterministic across chains, and cross-checking
    `.poolManager()` on each peripheral is a thirty-second sanity check that proves the whole set is
