@@ -40,25 +40,30 @@
   --tt-tailw: 6px;
 }
 
+/* Arasaka. The app is single-theme by design -- a facility terminal has no
+   light mode -- so this remaps DaisyUI's dark theme rather than adding a
+   parallel one. Scaffold-ETH's own chrome (RainbowKit modal, notification
+   toasts) reads these tokens, so remapping keeps it coherent with the panels
+   instead of leaving blue Scaffold defaults floating over an amber terminal. */
 @plugin "daisyui/theme" {
   name: "dark";
 
-  --color-primary: #212638;
-  --color-primary-content: #f9fbff;
-  --color-secondary: #323f61;
-  --color-secondary-content: #f9fbff;
-  --color-accent: #4969a6;
-  --color-accent-content: #f9fbff;
-  --color-neutral: #f9fbff;
-  --color-neutral-content: #385183;
-  --color-base-100: #385183;
-  --color-base-200: #2a3655;
-  --color-base-300: #212638;
-  --color-base-content: #f9fbff;
-  --color-info: #385183;
-  --color-success: #34eeb6;
-  --color-warning: #ffcf72;
-  --color-error: #ff8863;
+  --color-primary: #ffc247;
+  --color-primary-content: #04060b;
+  --color-secondary: #302617;
+  --color-secondary-content: #e2ebf3;
+  --color-accent: #7ce2ff;
+  --color-accent-content: #04060b;
+  --color-neutral: #27374a;
+  --color-neutral-content: #e2ebf3;
+  --color-base-100: #1e2b3a;
+  --color-base-200: #04060b;
+  --color-base-300: #27374a;
+  --color-base-content: #e2ebf3;
+  --color-info: #7ce2ff;
+  --color-success: #7ce2ff;
+  --color-warning: #ffc247;
+  --color-error: #ff8f97;
 
   --radius-field: 0rem;
   --radius-box: 0rem;
@@ -117,4 +122,330 @@
 
 .link:hover {
   opacity: 80%;
+}
+
+/* ============================================================================
+   JOULE — Arasaka terminal
+   ============================================================================
+   Two panel surfaces, encoding what a panel is FOR:
+     .jl-read  cool #1e2b3a, cyan chip   Market · Collateral · Ledger
+     .jl-act   warm #302617, amber chip  Wallet · Acquire · Commission
+
+   Their lightness is matched (1.03:1 apart) deliberately -- the groups differ
+   in KIND, not importance, so neither should read as elevated. Separation from
+   the page is carried by lightness (1.41 / 1.37), the grouping by hue, and
+   both are reinforced by the chip colour so the system survives a projector
+   that flattens subtle fills.
+
+   Every foreground was measured against BOTH surfaces:
+     dim  #b5c4d0  8.05 / 8.32     text  #e2ebf3  11.91 / 12.30
+     acc  #ffc247  8.93 / 9.23     data  #7ce2ff   9.70 / 10.02
+     rule #809ab0  4.90 / 5.06     alarm #ff8f97   6.59 / 6.80
+   All AAA for their use. `alarm` appears only on bold uppercase tags, where
+   the AAA threshold is 4.5:1.
+   ========================================================================= */
+
+:root {
+  --jl-void: #04060b;
+  --jl-panel-read: #1e2b3a;
+  --jl-panel-act: #302617;
+  --jl-raise-read: #27374a;
+  --jl-raise-act: #3d3020;
+
+  --jl-rule: #809ab0;
+  --jl-rule-dim: #3d5064;
+
+  --jl-dim: #b5c4d0;
+  --jl-text: #e2ebf3;
+  --jl-bright: #ffffff;
+
+  --jl-accent: #ffc247;
+  --jl-data: #7ce2ff;
+  --jl-alarm: #ff8f97;
+
+  --jl-chamfer: 12px;
+  --jl-mono: ui-monospace, "SF Mono", "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+  --jl-sans: ui-sans-serif, system-ui, "Helvetica Neue", Arial, sans-serif;
+
+  --jl-micro: 12px;
+  --jl-small: 13.5px;
+  --jl-body: 16px;
+}
+
+body {
+  background: var(--jl-void);
+  color: var(--jl-text);
+  font-family: var(--jl-mono);
+  font-size: var(--jl-body);
+}
+
+/* Scanlines: 4px period at low opacity. Fine 1px dithering is what video
+   codecs turn to mush and what moirés against a camera sensor. */
+.jl-scan::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgb(255 255 255 / 0.02) 0 1px, transparent 1px 4px);
+}
+
+/* ---- panel shell ---- */
+.jl-panel {
+  position: relative;
+  border: 1px solid var(--jl-rule-dim);
+  padding: 20px 22px 22px;
+  clip-path: polygon(
+    var(--jl-chamfer) 0,
+    100% 0,
+    100% calc(100% - var(--jl-chamfer)),
+    calc(100% - var(--jl-chamfer)) 100%,
+    0 100%,
+    0 var(--jl-chamfer)
+  );
+}
+.jl-read {
+  background: var(--jl-panel-read);
+  --jl-raise: var(--jl-raise-read);
+  --jl-chip: var(--jl-data);
+}
+.jl-act {
+  background: var(--jl-panel-act);
+  --jl-raise: var(--jl-raise-act);
+  --jl-chip: var(--jl-accent);
+}
+.jl-brk {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 54px;
+  height: 3px;
+  background: var(--jl-chip);
+}
+
+.jl-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--jl-rule-dim);
+}
+.jl-code {
+  font-size: 11.5px;
+  letter-spacing: 0.24em;
+  color: var(--jl-void);
+  background: var(--jl-chip);
+  padding: 4px 9px 3px;
+  font-weight: 700;
+}
+.jl-title {
+  font-size: 14px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--jl-bright);
+  font-weight: 700;
+}
+.jl-note {
+  margin-left: auto;
+  font-size: var(--jl-micro);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--jl-dim);
+  font-weight: 500;
+}
+
+/* ---- figures ---- */
+.jl-big {
+  font-size: clamp(48px, 7.5vw, 78px);
+  line-height: 1;
+  color: var(--jl-data);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+.jl-unit {
+  font-size: var(--jl-small);
+  letter-spacing: 0.18em;
+  color: var(--jl-dim);
+  text-transform: uppercase;
+  margin-top: 10px;
+  font-weight: 500;
+}
+.jl-k {
+  font-size: var(--jl-micro);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--jl-dim);
+  font-weight: 500;
+}
+.jl-tiles {
+  display: grid;
+  gap: 1px;
+  background: var(--jl-rule-dim);
+  border: 1px solid var(--jl-rule-dim);
+}
+.jl-tile {
+  background: var(--jl-raise);
+  padding: 16px 18px;
+}
+.jl-tile-v {
+  font-size: 32px;
+  margin-top: 8px;
+  color: var(--jl-bright);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1;
+}
+.jl-tile-s {
+  font-size: var(--jl-small);
+  color: var(--jl-dim);
+  margin-top: 7px;
+}
+
+/* ---- controls ---- */
+.jl-input {
+  width: 100%;
+  background: var(--jl-void);
+  border: 1px solid var(--jl-rule);
+  color: var(--jl-bright);
+  font: inherit;
+  font-size: 24px;
+  font-weight: 700;
+  padding: 12px 14px;
+  font-variant-numeric: tabular-nums;
+}
+.jl-input:focus-visible {
+  outline: none;
+  border-color: var(--jl-accent);
+  box-shadow: 0 0 26px -6px var(--jl-accent);
+}
+.jl-input:disabled {
+  opacity: 0.55;
+}
+
+.jl-quote {
+  margin-top: 16px;
+  border: 1px solid var(--jl-rule-dim);
+  padding: 14px 16px;
+  background: var(--jl-void);
+}
+
+.jl-btn {
+  display: block;
+  width: 100%;
+  margin-top: 18px;
+  font: inherit;
+  cursor: pointer;
+  font-size: 15px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-weight: 700;
+  background: var(--jl-accent);
+  color: var(--jl-void);
+  border: 0;
+  padding: 15px 18px;
+  clip-path: polygon(11px 0, 100% 0, 100% calc(100% - 11px), calc(100% - 11px) 100%, 0 100%, 0 11px);
+  transition: filter 0.15s;
+}
+.jl-btn:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+.jl-btn:focus-visible {
+  outline: 3px solid var(--jl-data);
+  outline-offset: 3px;
+}
+.jl-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.jl-btn-ghost {
+  background: transparent;
+  color: var(--jl-accent);
+  border: 2px solid var(--jl-accent);
+}
+.jl-btn-ice {
+  background: var(--jl-data);
+}
+
+/* ---- ledger ---- */
+.jl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.jl-table th {
+  text-align: left;
+  font-size: var(--jl-micro);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--jl-dim);
+  font-weight: 700;
+  padding: 0 14px 12px 0;
+  border-bottom: 1px solid var(--jl-rule);
+}
+.jl-table td {
+  padding: 15px 14px 15px 0;
+  border-bottom: 1px solid var(--jl-rule-dim);
+  font-size: var(--jl-body);
+  color: var(--jl-text);
+}
+.jl-table tr:last-child td {
+  border-bottom: 0;
+}
+.jl-tag {
+  display: inline-block;
+  font-size: var(--jl-micro);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 5px 11px 4px;
+  border: 2px solid currentColor;
+  font-weight: 700;
+}
+
+/* ---- misc ---- */
+.jl-dim {
+  color: var(--jl-dim);
+}
+.jl-prose {
+  font-family: var(--jl-sans);
+  color: var(--jl-dim);
+  line-height: 1.55;
+}
+.jl-live::before {
+  content: "●";
+  margin-right: 7px;
+  font-size: 10px;
+  vertical-align: 1px;
+  animation: jl-pulse 2.4s ease-in-out infinite;
+}
+@keyframes jl-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jl-live::before {
+    animation: none;
+  }
+}
+
+/* Panel grids. Inline styles cannot express media queries, so the responsive
+   collapse lives here alongside the rest of the terminal. */
+.jl-grid-2 {
+  grid-template-columns: 1.3fr 0.95fr;
+}
+.jl-grid-ops {
+  grid-template-columns: 1fr 1fr;
+}
+@media (max-width: 940px) {
+  .jl-grid-2,
+  .jl-grid-ops {
+    grid-template-columns: 1fr;
+  }
 }

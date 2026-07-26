@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useIsClient } from "usehooks-ts";
 import { encodeAbiParameters, formatUnits, maxUint256 } from "viem";
 import { useAccount } from "wagmi";
+import { Panel } from "~~/components/joule/Panel";
 import { useDeployedContractInfo, useScaffoldReadContract, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
 import { notification } from "~~/utils/scaffold-eth";
 
@@ -19,8 +20,6 @@ const ONE_JOULE = 10n ** 18n;
  */
 export const RedeemPanel = ({ onRedeemed }: { onRedeemed?: () => void }) => {
   const { address, isConnected } = useAccount();
-  // See BuyPanel: branching on wagmi's connection state during SSR hydrates
-  // mismatched, because the session is only restored on the client.
   const connected = useIsClient() && isConnected;
   const [a, setA] = useState("2");
   const [b, setB] = useState("2");
@@ -32,21 +31,27 @@ export const RedeemPanel = ({ onRedeemed }: { onRedeemed?: () => void }) => {
     contractName: "JouleToken",
     functionName: "balanceOf",
     args: [address],
+    watch: true,
   });
-
   const { data: allowance, refetch: refetchAllowance } = useScaffoldReadContract({
     contractName: "JouleToken",
     functionName: "allowance",
     args: [address, escrow?.address],
+  });
+  const { data: faceValue } = useScaffoldReadContract({ contractName: "WorkEscrow", functionName: "faceValue" });
+  const { data: penalty } = useScaffoldReadContract({ contractName: "WorkEscrow", functionName: "penalty" });
+  const { data: deliveryBlocks } = useScaffoldReadContract({
+    contractName: "WorkEscrow",
+    functionName: "deliveryBlocks",
   });
 
   const { writeContractAsync: writeJoule } = useScaffoldWriteContract({ contractName: "JouleToken" });
   const { writeContractAsync: writeEscrow } = useScaffoldWriteContract({ contractName: "WorkEscrow" });
 
   const held = balance ?? 0n;
-  const approved = allowance ?? 0n;
   const hasJoule = held >= ONE_JOULE;
-  const needsApproval = approved < ONE_JOULE;
+  const needsApproval = (allowance ?? 0n) < ONE_JOULE;
+  const refund = Number(formatUnits((faceValue ?? 0n) + (penalty ?? 0n), 6));
 
   const redeem = async () => {
     if (!escrow?.address) return;
@@ -68,18 +73,16 @@ export const RedeemPanel = ({ onRedeemed }: { onRedeemed?: () => void }) => {
         await refetchAllowance();
       }
 
-      // Must match SumVerifier exactly: abi.encode(uint256 a, uint256 b).
-      // The escrow stores only keccak256 of this and demands the same bytes
-      // back at submitWork, so an encoding mismatch here is unrecoverable.
+      // Must match SumVerifier exactly: abi.encode(uint256 a, uint256 b). The
+      // escrow stores only keccak256 of this and demands the same bytes back at
+      // submitWork, so an encoding mismatch here is unrecoverable.
       const jobSpec = encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [operandA, operandB]);
-
       await writeEscrow({ functionName: "redeem", args: [jobSpec] });
 
       await Promise.all([refetchBalance(), refetchAllowance()]);
       onRedeemed?.();
     } catch (error) {
-      // useScaffoldWriteContract already surfaces a parsed error toast; this
-      // only catches what escapes it.
+      // useScaffoldWriteContract already surfaces a parsed error toast.
       console.error(error);
     } finally {
       setBusy(false);
@@ -87,61 +90,78 @@ export const RedeemPanel = ({ onRedeemed }: { onRedeemed?: () => void }) => {
   };
 
   return (
-    <div className="card bg-base-100 shadow-xl">
-      <div className="card-body">
-        <h2 className="card-title">Redeem for work</h2>
-        <p className="text-sm opacity-70 -mt-2">
-          Spend one Joule to commission a job. The agent has a fixed window to deliver, or you can claim its collateral.
-        </p>
-
-        <div className="flex gap-3">
-          <label className="form-control w-full">
-            <div className="label">
-              <span className="label-text">a</span>
-            </div>
-            <input
-              type="number"
-              className="input input-bordered w-full"
-              value={a}
-              onChange={e => setA(e.target.value)}
-              disabled={busy}
-            />
+    <Panel
+      kind="act"
+      code="RDM"
+      title="Commission work"
+      note={deliveryBlocks ? `Window · ${deliveryBlocks} blocks` : undefined}
+      hint="Spend one Joule to order a job. The agent must deliver inside the window or you can take its collateral instead."
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <label className="jl-k" htmlFor="jl-a" style={{ display: "block", marginBottom: 8 }}>
+            Operand A
           </label>
-          <label className="form-control w-full">
-            <div className="label">
-              <span className="label-text">b</span>
-            </div>
-            <input
-              type="number"
-              className="input input-bordered w-full"
-              value={b}
-              onChange={e => setB(e.target.value)}
-              disabled={busy}
-            />
+          <input
+            id="jl-a"
+            className="jl-input"
+            type="number"
+            inputMode="numeric"
+            value={a}
+            onChange={e => setA(e.target.value)}
+            disabled={busy}
+          />
+        </div>
+        <div>
+          <label className="jl-k" htmlFor="jl-b" style={{ display: "block", marginBottom: 8 }}>
+            Operand B
           </label>
-        </div>
-
-        <div className="text-sm opacity-70 mt-1">
-          Job:{" "}
-          <span className="font-mono">
-            sum({a || "?"}, {b || "?"})
-          </span>{" "}
-          · you hold <span className="font-mono">{Number(formatUnits(held, 18)).toFixed(4)}</span> JOULE
-        </div>
-
-        <div className="card-actions mt-2">
-          <button className="btn btn-secondary w-full" onClick={redeem} disabled={!connected || busy || !hasJoule}>
-            {busy ? <span className="loading loading-spinner loading-sm" /> : null}
-            {!connected
-              ? "Connect a wallet"
-              : !hasJoule
-                ? "You need a whole Joule"
-                : needsApproval
-                  ? "Approve and redeem"
-                  : "Redeem"}
-          </button>
+          <input
+            id="jl-b"
+            className="jl-input"
+            type="number"
+            inputMode="numeric"
+            value={b}
+            onChange={e => setB(e.target.value)}
+            disabled={busy}
+          />
         </div>
       </div>
-    </div>
+
+      <div className="jl-quote">
+        <div style={ROW}>
+          <span className="jl-k">Job</span>
+          <span className="jl-dim" style={{ fontSize: "var(--jl-small)" }}>
+            sum({a || "?"}, {b || "?"})
+          </span>
+        </div>
+        <div style={{ ...ROW, marginTop: 10 }}>
+          <span className="jl-k">On default</span>
+          <span className="jl-dim" style={{ fontSize: "var(--jl-small)" }}>
+            {refund.toFixed(2)} USDC back to you
+          </span>
+        </div>
+        <div style={{ ...ROW, marginTop: 10 }}>
+          <span className="jl-k">You hold</span>
+          <span className="jl-dim" style={{ fontSize: "var(--jl-small)" }}>
+            {Number(formatUnits(held, 18)).toFixed(4)} Joules
+          </span>
+        </div>
+      </div>
+
+      <button className="jl-btn jl-btn-ice" type="button" onClick={redeem} disabled={!connected || busy || !hasJoule}>
+        {!connected
+          ? "Connect a wallet"
+          : !hasJoule
+            ? "You need a whole Joule"
+            : busy
+              ? "Working…"
+              : needsApproval
+                ? "Approve and redeem"
+                : "Redeem"}
+      </button>
+    </Panel>
   );
 };
+
+const ROW = { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 14 } as const;
