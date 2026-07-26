@@ -37,8 +37,8 @@
     "foundry:test": "yarn workspace @se-2/foundry test",
     "foundry:test:fork": "yarn workspace @se-2/foundry test:fork",
     "foundry:verify": "yarn workspace @se-2/foundry verify",
+    "foundry:verify-sepolia": "yarn workspace @se-2/foundry verify:sepolia",
     "generate": "yarn foundry:generate",
-    "postinstall": "husky install",
     "ipfs": "yarn workspace @se-2/nextjs ipfs",
     "lint": "yarn next:lint && yarn foundry:lint",
     "next:build": "yarn workspace @se-2/nextjs build",
@@ -46,13 +46,15 @@
     "next:format": "yarn workspace @se-2/nextjs format",
     "next:lint": "yarn workspace @se-2/nextjs lint",
     "next:serve": "yarn workspace @se-2/nextjs serve",
+    "postinstall": "husky install",
     "precommit": "lint-staged",
     "start": "yarn workspace @se-2/nextjs dev",
     "test": "yarn foundry:test",
     "vercel": "yarn workspace @se-2/nextjs vercel",
     "vercel:login": "yarn workspace @se-2/nextjs vercel:login",
     "vercel:yolo": "yarn workspace @se-2/nextjs vercel:yolo",
-    "verify": "yarn foundry:verify"
+    "verify": "yarn foundry:verify",
+    "verify:sepolia": "yarn foundry:verify-sepolia"
   },
   "devDependencies": {
     "husky": "~9.1.6",
