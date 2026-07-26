@@ -32,6 +32,27 @@ const UPSTREAM = "https://eth-sepolia.g.alchemy.com/v2";
 const TIMEOUT_MS = 15_000;
 
 /**
+ * Log queries go to a different key, and the reason is not obvious.
+ *
+ * Alchemy's FREE tier refuses any `eth_getLogs` spanning more than 10 blocks.
+ * The job ledger reads from the escrow's deploy block — thousands of blocks —
+ * so a free key cannot serve it at all. Scaffold-ETH's shared default key sits
+ * on a paid plan and has no such cap.
+ *
+ * So: the private key handles the chatty traffic, where its own rate limit is
+ * the thing that matters, and log queries fall back to the shared key, which is
+ * the only one that can answer them. Log queries are rare, so leaning on a
+ * shared key for them costs little.
+ *
+ * Set ALCHEMY_ARCHIVE_API_KEY to a paid key of your own and this split
+ * disappears — both paths use it.
+ */
+const LOG_METHODS = new Set(["eth_getLogs", "eth_getFilterLogs"]);
+
+/** Scaffold-ETH's public default. Not a secret; it ships in every SE-2 build. */
+const SHARED_FALLBACK_KEY = "IZYEU2cWBgnFmgiTAgpWD";
+
+/**
  * Exactly what the app calls, and nothing else.
  *
  * `eth_sendRawTransaction` has to be here or no one can buy or redeem. It is
@@ -112,8 +133,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(payload, { status: 200 });
   }
 
+  // One key per request, chosen by the batch: if anything in it is a log query,
+  // the whole batch needs the archive-capable key.
+  const needsArchive = calls.some(call => LOG_METHODS.has(call.method as string));
+  const key = needsArchive ? (process.env.ALCHEMY_ARCHIVE_API_KEY ?? SHARED_FALLBACK_KEY) : apiKey;
+
   try {
-    const upstream = await fetch(`${UPSTREAM}/${apiKey}`, {
+    const upstream = await fetch(`${UPSTREAM}/${key}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
